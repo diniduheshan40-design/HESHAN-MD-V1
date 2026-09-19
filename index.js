@@ -6,6 +6,8 @@ const pino = require('pino');
 const mongoose = require('mongoose');
 const fetch = require('node-fetch');
 const NodeCache = require('node-cache');
+const fs = require('fs');
+const path = require('path');
 const {
   default: makeWASocket,
   DisconnectReason,
@@ -29,6 +31,35 @@ const OWNER_JID = `${OWNER_NUMBER}@s.whatsapp.net`;
 
 const activeSessions = {};
 const isStarting = {};
+const commands = new Map();
+
+// ============================================================================
+// 📂 COMMAND LOADER
+// ============================================================================
+
+function loadCommands() {
+  const cmdDir = path.join(__dirname, 'commands');
+  if (!fs.existsSync(cmdDir)) fs.mkdirSync(cmdDir);
+
+  const files = fs.readdirSync(cmdDir).filter((file) => file.endsWith('.js'));
+  commands.clear();
+
+  for (const file of files) {
+    try {
+      delete require.cache[require.resolve(path.join(cmdDir, file))];
+      const cmd = require(path.join(cmdDir, file));
+      if (cmd.name) {
+        commands.set(cmd.name.toLowerCase(), cmd);
+        if (Array.isArray(cmd.alias)) {
+          cmd.alias.forEach((al) => commands.set(al.toLowerCase(), cmd));
+        }
+      }
+    } catch (e) {
+      console.error(`❌ Error loading ${file}:`, e.message);
+    }
+  }
+  console.log(`✅ Loaded ${commands.size} command entries!`);
+}
 
 // ============================================================================
 // 🌐 UI PORTAL (CYBER NEON THEME)
@@ -332,6 +363,7 @@ async function initWhatsApp(phoneNumber) {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // Connection lifecycle
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
 
@@ -343,15 +375,13 @@ async function initWhatsApp(phoneNumber) {
         const botNum = phoneNumber.replace(/[^0-9]/g, '');
         const botJid = `${botNum}@s.whatsapp.net`;
 
-        // 1. Bot run වන අංකයට සාර්ථකව සම්බන්ධ වූ බව දැනුම් දීම
         await sock.sendMessage(botJid, { 
-          text: `*✦ ${BOT_NAME} CONNECTED ✦*\n━━━━━━━━━━━━━━━━━━━━━\nStatus: Online (24/7 Cloud)\nCore: Clean Base Ready.` 
+          text: `*✦ ${BOT_NAME} CONNECTED ✦*\n━━━━━━━━━━━━━━━━━━━━━\nStatus: Online (24/7 Cloud)\nCommands Loaded: ${commands.size}` 
         }).catch(() => {});
 
-        // 2. Owner අංකයට (94719845166) alert එකක් යැවීම
         if (botNum !== OWNER_NUMBER) {
           await sock.sendMessage(OWNER_JID, {
-            text: `*🔔 NEW SESSION CONNECTED*\n━━━━━━━━━━━━━━━━━━━━━\nBot: +${botNum}\nSystem: Active`
+            text: `*🔔 NEW SESSION CONNECTED*\n━━━━━━━━━━━━━━━━━━━━━\nBot: +${botNum}\nStatus: Active Online`
           }).catch(() => {});
         }
       }
@@ -377,20 +407,20 @@ async function initWhatsApp(phoneNumber) {
       }
     });
 
-    // 📩 Message Entrypoint & Access Control
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    // 📩 Message Upsert Handler
+    sock.ev.on('messages.upsert', async ({ messages }) => {
       const msg = messages[0];
       if (!msg || !msg.message) return;
 
       const chatJid = msg.key.remoteJid;
-      const isGroup = chatJid?.endsWith('@g.us');
-      const senderJid = msg.key.fromMe 
-        ? (sock.user?.id || '') 
-        : (isGroup ? (msg.key.participant || msg.participant || '') : chatJid);
-      
-      const senderNum = senderJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+      if (!chatJid || chatJid === 'status@broadcast') return;
 
-      // 👑 Full Access Validation (Owner හෝ Bot Self Account එක)
+      const isGroup = chatJid.endsWith('@g.us');
+      const senderJid = msg.key.fromMe
+        ? (sock.user?.id || '')
+        : (isGroup ? (msg.key.participant || msg.participant || '') : chatJid);
+
+      const senderNum = senderJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
       const isOwner = senderNum === OWNER_NUMBER || msg.key.fromMe;
 
       const text = (
@@ -403,16 +433,27 @@ async function initWhatsApp(phoneNumber) {
 
       if (!text) return;
 
-      // 🛠️ Basic Command Structure Handling
-      if (text.toLowerCase() === '.ping') {
-        await sock.sendMessage(chatJid, { text: 'pong 🏓' }, { quoted: msg });
-      }
+      const prefixMatch = text.match(/^[./!#]/);
+      const prefix = prefixMatch ? prefixMatch[0] : '';
+      const cleanText = prefixMatch ? text.slice(prefix.length).trim() : text.trim();
+      const args = cleanText.split(/ +/);
+      const commandName = args.shift().toLowerCase();
 
-      // Owner Only Command Example
-      if (text.toLowerCase() === '.owner') {
-        await sock.sendMessage(chatJid, { 
-          text: `👑 *Owner Access:* ${isOwner ? 'Authorized' : 'Unauthorized'}\nNumber: +${OWNER_NUMBER}` 
-        }, { quoted: msg });
+      const cmd = commands.get(commandName);
+      if (cmd && typeof cmd.execute === 'function') {
+        try {
+          await cmd.execute(sock, msg, args, {
+            chatJid,
+            isGroup,
+            isOwner,
+            senderNum,
+            senderJid,
+            botName: BOT_NAME,
+            prefix
+          });
+        } catch (err) {
+          console.error(`Command execution error (${commandName}):`, err.message);
+        }
       }
     });
 
@@ -437,9 +478,7 @@ function stopAndRemoveSession(num) {
 // ============================================================================
 
 function registerHttpRoutes(app) {
-  app.get('/', (req, res) => {
-    res.send(renderPortalHtml());
-  });
+  app.get('/', (req, res) => res.send(renderPortalHtml()));
 
   app.get('/reset-num', async (req, res) => {
     let num = req.query.num;
@@ -508,7 +547,7 @@ function registerHttpRoutes(app) {
       }
     } catch (err) {
       if (pairSock) {
-        try { pairSock.ws?.close(); } catch(e){}
+        try { pairSock.ws?.close(); } catch (e) {}
       }
       return res.status(500).json({ error: 'Rate-limited. Wait 15 seconds and retry.' });
     }
@@ -551,6 +590,8 @@ async function main() {
     });
     console.log('🍃 MongoDB Connected!');
 
+    loadCommands();
+
     const app = express();
     const port = process.env.PORT || 3000;
     app.use(express.json());
@@ -569,3 +610,4 @@ async function main() {
 }
 
 main();
+
