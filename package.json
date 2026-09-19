@@ -1,0 +1,20 @@
+{
+  "name": "heshan-md-v1",
+  "version": "1.0.0",
+  "description": "Clean Multi-Device WhatsApp Bot Core",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.12",
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5",
+    "node-cache": "^5.1.2",
+    "node-fetch": "^2.7.0",
+    "pino": "^9.6.0"
+  },
+  "engines": {
+    "node": ">=20.x"
+  }
+}
