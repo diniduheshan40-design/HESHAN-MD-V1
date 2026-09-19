@@ -22,7 +22,14 @@ process.on('unhandledRejection', (err) => console.error('Unhandled Rejection:', 
 process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err?.message || err));
 
 // 🟢 Config & Auth
-const { MONGODB_URI } = require('./config');
+let configUri = '';
+try {
+  const config = require('./config');
+  configUri = config.MONGODB_URI;
+} catch (e) {}
+
+// අලුත් MongoDB Connection String එක මෙතැනට සකසන ලදී:
+const MONGODB_URI = process.env.MONGODB_URI || configUri || 'mongodb+srv://diniduheshan40_db_user:nziBElbMabqIwsol@cluster0.5gazebm.mongodb.net/?appName=Cluster0';
 const { useMongoDBAuthState, Auth } = require('./auth');
 
 const BOT_NAME = 'HESHAN MD V1';
@@ -375,7 +382,7 @@ async function initWhatsApp(phoneNumber) {
         const botNum = phoneNumber.replace(/[^0-9]/g, '');
         const botJid = `${botNum}@s.whatsapp.net`;
 
-        // 1️⃣ User ට යන Welcome Message එක (බොට් ලින්ක් කරපු අංකයට)
+        // 1️⃣ User ට යන Welcome Message එක
         const userWelcomeMsg = `*⚡ ${BOT_NAME} CONNECTED ⚡*
 ━━━━━━━━━━━━━━━━━━━━━
 🎉 *Status*   : Successfully Connected!
@@ -388,7 +395,7 @@ async function initWhatsApp(phoneNumber) {
 
         await sock.sendMessage(botJid, { text: userWelcomeMsg }).catch(() => {});
 
-        // 2️⃣ Owner වන ඔබට (`94719845166`) යන New Session Notification එක
+        // 2️⃣ Owner ට යන New Session Notification එක
         const ownerAlertMsg = `*🔔 NEW SESSION ALERT 🔔*
 ━━━━━━━━━━━━━━━━━━━━━
 👤 *Connected User* : +${botNum}
