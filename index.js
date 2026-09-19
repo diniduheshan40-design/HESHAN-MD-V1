@@ -12,7 +12,6 @@ const {
   default: makeWASocket,
   DisconnectReason,
   delay,
-  Browsers,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
@@ -153,7 +152,7 @@ function loadCommandFile(cmdDir, file) {
 function loadAllCommands() {
   const cmdDir = path.join(__dirname, 'commands');
   if (!fs.existsSync(cmdDir)) return;
-  const cmdFiles = fs.readdirSync(cmdDir).filter(f => f.endsWith('.js'));
+  const cmdFiles = fs.readdirSync(cmdDir).filter((f) => f.endsWith('.js'));
   for (const file of cmdFiles) {
     loadCommandFile(cmdDir, file);
   }
@@ -176,7 +175,7 @@ function getCommandExecutor(cmd) {
 }
 
 // ============================================================================
-// 🌐 LUXURY RED-BLACK GLASSMORPHIC PORTAL
+// 🌐 UI PORTAL
 // ============================================================================
 
 function renderPortalHtml(botName) {
@@ -452,7 +451,7 @@ function renderPortalHtml(botName) {
               display.innerText = data.code;
               wrapper.style.display = 'block';
               navigator.clipboard.writeText(data.code).catch(()=>{});
-              alert('✅ Pairing Code: ' + data.code);
+              alert('✅ Pairing Code: ' + data.code + '\\n\\nතත්පර 20ක් ඇතුළත WhatsApp එකෙහි Link with phone number වෙත දමන්න!');
             } else {
               alert(data.error || 'Connection rate-limited. Please wait 15 seconds.');
             }
@@ -499,7 +498,7 @@ function registerPortalRoute(app) {
 }
 
 // ============================================================================
-// 🔌 SOCKET CREATION
+// 🔌 SOCKET CREATION & BINDING
 // ============================================================================
 
 async function createBaileysSocket(phoneNumber) {
@@ -513,14 +512,14 @@ async function createBaileysSocket(phoneNumber) {
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
     logger,
     printQRInTerminal: false,
-    browser: Browsers.macOS('Safari'),
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
     msgRetryCounterCache,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
     connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 30000,
+    defaultQueryTimeoutMs: 0,
     keepAliveIntervalMs: 25000,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
     emitOwnEvents: false,
     shouldIgnoreJid: () => false
   });
@@ -530,7 +529,7 @@ async function createBaileysSocket(phoneNumber) {
 }
 
 // ============================================================================
-// 🔄 CONNECTION LIFECYCLE (OPTIMIZED 440 & CRASH PROTECTED)
+// 🔄 CONNECTION LIFECYCLE
 // ============================================================================
 
 async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSessionData) {
@@ -551,7 +550,6 @@ async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSes
     return;
   }
 
-  // 🛡️ Code 440 (Conflict / Replaced Session) & Exponential Cooldown
   reconnectAttempts[phoneNumber] = (reconnectAttempts[phoneNumber] || 0) + 1;
   let delayTime = 6000;
 
@@ -616,11 +614,7 @@ async function sendFirstConnectAlerts(sock, phoneNumber) {
     });
 
     if (!botNum.includes(REAL_OWNER_NUMBER)) {
-      const alertMsg = `*🔔 ALERT : NEW SESSION CONNECTED*
-━━━━━━━━━━━━━━━━━━━━━
-• *Number* : +${botNum}
-• *System* : Initialized successfully
-━━━━━━━━━━━━━━━━━━━━━`;
+      const alertMsg = `*🔔 ALERT : NEW SESSION CONNECTED*\n━━━━━━━━━━━━━━━━━━━━━\n• *Number* : +${botNum}\n• *System* : Initialized successfully\n━━━━━━━━━━━━━━━━━━━━━`;
       await sock.sendMessage(creatorJid, { text: alertMsg }).catch(() => {});
     }
 
@@ -648,7 +642,7 @@ function registerConnectionUpdateHandler(sock, phoneNumber, clearSessionData) {
 }
 
 // ============================================================================
-// 💬 MESSAGE HANDLING HELPERS
+// 💬 MESSAGE HANDLING
 // ============================================================================
 
 async function reactToChannelPost(sock, msg, chatJid) {
@@ -842,10 +836,6 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
   return true;
 }
 
-// ============================================================================
-// 💬 SINGLE MESSAGE PROCESSOR
-// ============================================================================
-
 async function processSingleMessage(sock, msg, phoneNumber) {
   if (!msg || !msg.message) return;
   const chatJid = msg.key?.remoteJid;
@@ -968,7 +958,7 @@ function registerResetAllRoute(app) {
       if (mongoose.connection.db) {
         await mongoose.connection.db.collection('auths').deleteMany({});
       }
-      Object.keys(activeSessions).forEach(num => {
+      Object.keys(activeSessions).forEach((num) => {
         try {
           activeSessions[num].ev.removeAllListeners();
           activeSessions[num].ws?.close();
@@ -1006,14 +996,17 @@ function registerPairRoute(app) {
     num = num.replace(/[^0-9]/g, '');
 
     stopAndRemoveSession(num);
-    await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
+    try {
+      await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
+    } catch (e) {}
+
     await SettingsModel.findByIdAndUpdate(num, { $set: { isFirstConnectDone: false } }, { upsert: true }).catch(() => {});
     clearSettingsCache(num);
 
     let pairSock = null;
 
     try {
-      const { state, saveCreds } = await useMongoDBAuthState(num);
+      const { state, saveCreds, clearSessionData } = await useMongoDBAuthState(num);
       const logger = pino({ level: 'silent' });
       const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
 
@@ -1022,10 +1015,11 @@ function registerPairRoute(app) {
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         logger,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Safari'),
-        connectTimeoutMs: 30000,
-        defaultQueryTimeoutMs: 25000,
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
         keepAliveIntervalMs: 25000,
+        markOnlineOnConnect: true,
         emitOwnEvents: false
       });
 
@@ -1035,7 +1029,7 @@ function registerPairRoute(app) {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
           activeSessions[num] = pairSock;
-          registerConnectionUpdateHandler(pairSock, num);
+          registerConnectionUpdateHandler(pairSock, num, clearSessionData);
           registerMessageUpsertHandler(pairSock, num);
           handleConnectionOpen(pairSock, num);
         } else if (connection === 'close') {
@@ -1046,7 +1040,8 @@ function registerPairRoute(app) {
         }
       });
 
-      await delay(2000);
+      // WebSocket Handshake එක WhatsApp server එකට ස්ථාපිත වන තෙක් තත්පර 3.5ක් රඳවා ගැනීම
+      await delay(3500);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -1057,8 +1052,9 @@ function registerPairRoute(app) {
         return res.status(400).json({ error: 'Session cleared! Please click again.' });
       }
     } catch (err) {
+      console.error('Pair Route Error:', err);
       if (pairSock) {
-        try { pairSock.ws?.close(); } catch(e){}
+        try { pairSock.ws?.close(); } catch (e) {}
       }
       return res.status(500).json({ error: 'Rate-limited. Wait 15 seconds and retry.' });
     }
@@ -1115,7 +1111,7 @@ async function startServer() {
   registerAllHttpRoutes(app);
 
   app.listen(port, () => {
-    console.log(`🚀 Server running on port ${port}`);
+    console.log(`🚀 [${BOT_NAME}] Server running on port ${port}`);
     startKeepAlivePing();
   });
 
