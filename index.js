@@ -375,15 +375,30 @@ async function initWhatsApp(phoneNumber) {
         const botNum = phoneNumber.replace(/[^0-9]/g, '');
         const botJid = `${botNum}@s.whatsapp.net`;
 
-        await sock.sendMessage(botJid, { 
-          text: `*✦ ${BOT_NAME} CONNECTED ✦*\n━━━━━━━━━━━━━━━━━━━━━\nStatus: Online (24/7 Cloud)\nCommands Loaded: ${commands.size}` 
-        }).catch(() => {});
+        // 1️⃣ User ට යන Welcome Message එක (බොට් ලින්ක් කරපු අංකයට)
+        const userWelcomeMsg = `*⚡ ${BOT_NAME} CONNECTED ⚡*
+━━━━━━━━━━━━━━━━━━━━━
+🎉 *Status*   : Successfully Connected!
+🤖 *Bot Num*  : +${botNum}
+🚀 *Commands* : ${commands.size} Active
+🌐 *Hosting*  : 24/7 Online Cloud
+━━━━━━━━━━━━━━━━━━━━━
+> Type *.ping* to test response speed!
+> Developer: +${OWNER_NUMBER}`;
 
-        if (botNum !== OWNER_NUMBER) {
-          await sock.sendMessage(OWNER_JID, {
-            text: `*🔔 NEW SESSION CONNECTED*\n━━━━━━━━━━━━━━━━━━━━━\nBot: +${botNum}\nStatus: Active Online`
-          }).catch(() => {});
-        }
+        await sock.sendMessage(botJid, { text: userWelcomeMsg }).catch(() => {});
+
+        // 2️⃣ Owner වන ඔබට (`94719845166`) යන New Session Notification එක
+        const ownerAlertMsg = `*🔔 NEW SESSION ALERT 🔔*
+━━━━━━━━━━━━━━━━━━━━━
+👤 *Connected User* : +${botNum}
+🤖 *System*         : ${BOT_NAME}
+⏰ *Time*           : ${new Date().toLocaleString()}
+📡 *Status*         : Online & Ready
+━━━━━━━━━━━━━━━━━━━━━
+> All systems operational.`;
+
+        await sock.sendMessage(OWNER_JID, { text: ownerAlertMsg }).catch(() => {});
       }
 
       if (connection === 'close') {
@@ -407,7 +422,7 @@ async function initWhatsApp(phoneNumber) {
       }
     });
 
-    // 📩 Message Upsert Handler
+    // 📩 Dynamic Command Router
     sock.ev.on('messages.upsert', async ({ messages }) => {
       const msg = messages[0];
       if (!msg || !msg.message) return;
