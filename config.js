@@ -1,6 +1,5 @@
 module.exports = {
-  MONGODB_URI: process.env.MONGODB_URI || 'ඔබගේ_MONGODB_URL_එක_මෙතනට_දමන්න',
+  MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://diniduheshan40_db_user:nziBElbMabqIwsol@cluster0.5gazebm.mongodb.net/?appName=Cluster0',
   BOT_NAME: 'HESHAN MD V1',
   OWNER_NUMBER: '94719845166'
 };
-
