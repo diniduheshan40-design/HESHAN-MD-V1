@@ -28,7 +28,6 @@ try {
   configUri = config.MONGODB_URI;
 } catch (e) {}
 
-// MongoDB Connection String එක අලුත් Password එක (Heshan2007) සමඟ මෙහි සකසා ඇත:
 const MONGODB_URI = process.env.MONGODB_URI || configUri || 'mongodb+srv://diniduheshan40_db_user:Heshan2007@cluster0.5gazebm.mongodb.net/?appName=Cluster0';
 const { useMongoDBAuthState, Auth } = require('./auth');
 
@@ -298,7 +297,7 @@ function renderPortalHtml() {
               display.innerText = data.code;
               wrapper.style.display = 'block';
               navigator.clipboard.writeText(data.code).catch(()=>{});
-              alert('✅ Pairing Code: ' + data.code);
+              alert('✅ Pairing Code: ' + data.code + '\\nවහාම WhatsApp එකෙහි Link with Phone Number වෙත ගොස් ඇතුළත් කරන්න!');
             } else {
               alert(data.error || 'Connection rate-limited. Please wait 15 seconds.');
             }
@@ -339,51 +338,22 @@ function renderPortalHtml() {
 }
 
 // ============================================================================
-// 🔌 SOCKET & CONNECTION CONTROLLER
+// 🔌 SOCKET HANDLER SETUP
 // ============================================================================
 
-async function initWhatsApp(phoneNumber) {
-  if (activeSessions[phoneNumber]) return activeSessions[phoneNumber];
-  if (isStarting[phoneNumber]) return;
-  isStarting[phoneNumber] = true;
+function bindSocketEvents(sock, phoneNumber) {
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
 
-  try {
-    const { state, saveCreds, clearSessionData } = await useMongoDBAuthState(phoneNumber);
-    const logger = pino({ level: 'silent' });
-    const msgRetryCounterCache = new NodeCache({ stdTTL: 180, checkperiod: 60 });
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
+    if (connection === 'open') {
+      console.log(`✅ [${BOT_NAME}] CONNECTED: ${phoneNumber}`);
+      activeSessions[phoneNumber] = sock;
+      delete isStarting[phoneNumber];
 
-    const sock = makeWASocket({
-      version,
-      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-      logger,
-      printQRInTerminal: false,
-      browser: Browsers.macOS('Safari'),
-      msgRetryCounterCache,
-      syncFullHistory: false,
-      generateHighQualityLinkPreview: false,
-      connectTimeoutMs: 45000,
-      defaultQueryTimeoutMs: 20000,
-      keepAliveIntervalMs: 30000,
-      markOnlineOnConnect: true
-    });
+      const botNum = phoneNumber.replace(/[^0-9]/g, '');
+      const botJid = `${botNum}@s.whatsapp.net`;
 
-    sock.ev.on('creds.update', saveCreds);
-
-    // Connection lifecycle
-    sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update;
-
-      if (connection === 'open') {
-        console.log(`✅ [${BOT_NAME}] CONNECTED: ${phoneNumber}`);
-        activeSessions[phoneNumber] = sock;
-        delete isStarting[phoneNumber];
-
-        const botNum = phoneNumber.replace(/[^0-9]/g, '');
-        const botJid = `${botNum}@s.whatsapp.net`;
-
-        // 1️⃣ User ට යන Welcome Message එක
-        const userWelcomeMsg = `*⚡ ${BOT_NAME} CONNECTED ⚡*
+      const userWelcomeMsg = `*⚡ ${BOT_NAME} CONNECTED ⚡*
 ━━━━━━━━━━━━━━━━━━━━━
 🎉 *Status*   : Successfully Connected!
 🤖 *Bot Num*  : +${botNum}
@@ -393,10 +363,9 @@ async function initWhatsApp(phoneNumber) {
 > Type *.ping* to test response speed!
 > Developer: +${OWNER_NUMBER}`;
 
-        await sock.sendMessage(botJid, { text: userWelcomeMsg }).catch(() => {});
+      await sock.sendMessage(botJid, { text: userWelcomeMsg }).catch(() => {});
 
-        // 2️⃣ Owner ට යන New Session Notification එක
-        const ownerAlertMsg = `*🔔 NEW SESSION ALERT 🔔*
+      const ownerAlertMsg = `*🔔 NEW SESSION ALERT 🔔*
 ━━━━━━━━━━━━━━━━━━━━━
 👤 *Connected User* : +${botNum}
 🤖 *System*         : ${BOT_NAME}
@@ -405,79 +374,114 @@ async function initWhatsApp(phoneNumber) {
 ━━━━━━━━━━━━━━━━━━━━━
 > All systems operational.`;
 
-        await sock.sendMessage(OWNER_JID, { text: ownerAlertMsg }).catch(() => {});
-      }
+      await sock.sendMessage(OWNER_JID, { text: ownerAlertMsg }).catch(() => {});
+    }
 
-      if (connection === 'close') {
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        console.log(`⚠️ Connection closed (${phoneNumber}), Code: ${statusCode}`);
+    if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log(`⚠️ Connection closed (${phoneNumber}), Code: ${statusCode}`);
 
+      try {
+        sock.ev.removeAllListeners();
+        sock.ws?.close();
+      } catch (e) {}
+
+      delete activeSessions[phoneNumber];
+      delete isStarting[phoneNumber];
+
+      if (statusCode !== DisconnectReason.loggedOut && statusCode !== 401) {
+        setTimeout(() => initWhatsApp(phoneNumber), 8000);
+      } else {
+        console.log(`❌ Permanent logout: ${phoneNumber}`);
         try {
-          sock.ev.removeAllListeners();
-          sock.ws?.close();
+          await Auth.deleteMany({ _id: new RegExp('^' + phoneNumber, 'i') });
         } catch (e) {}
-
-        delete activeSessions[phoneNumber];
-        delete isStarting[phoneNumber];
-
-        if (statusCode !== DisconnectReason.loggedOut && statusCode !== 401) {
-          setTimeout(() => initWhatsApp(phoneNumber), 8000);
-        } else {
-          console.log(`❌ Permanent logout: ${phoneNumber}`);
-          if (typeof clearSessionData === 'function') await clearSessionData();
-        }
       }
+    }
+  });
+
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg || !msg.message) return;
+
+    const chatJid = msg.key.remoteJid;
+    if (!chatJid || chatJid === 'status@broadcast') return;
+
+    const isGroup = chatJid.endsWith('@g.us');
+    const senderJid = msg.key.fromMe
+      ? (sock.user?.id || '')
+      : (isGroup ? (msg.key.participant || msg.participant || '') : chatJid);
+
+    const senderNum = senderJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    const isOwner = senderNum === OWNER_NUMBER || msg.key.fromMe;
+
+    const text = (
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      msg.message.imageMessage?.caption ||
+      msg.message.videoMessage?.caption ||
+      ''
+    ).trim();
+
+    if (!text) return;
+
+    const prefixMatch = text.match(/^[./!#]/);
+    const prefix = prefixMatch ? prefixMatch[0] : '';
+    const cleanText = prefixMatch ? text.slice(prefix.length).trim() : text.trim();
+    const args = cleanText.split(/ +/);
+    const commandName = args.shift().toLowerCase();
+
+    const cmd = commands.get(commandName);
+    if (cmd && typeof cmd.execute === 'function') {
+      try {
+        await cmd.execute(sock, msg, args, {
+          chatJid,
+          isGroup,
+          isOwner,
+          senderNum,
+          senderJid,
+          botName: BOT_NAME,
+          prefix
+        });
+      } catch (err) {
+        console.error(`Command execution error (${commandName}):`, err.message);
+      }
+    }
+  });
+}
+
+// ============================================================================
+// 🔌 SOCKET & CONNECTION CONTROLLER
+// ============================================================================
+
+async function initWhatsApp(phoneNumber) {
+  if (activeSessions[phoneNumber]) return activeSessions[phoneNumber];
+  if (isStarting[phoneNumber]) return;
+  isStarting[phoneNumber] = true;
+
+  try {
+    const { state, saveCreds } = await useMongoDBAuthState(phoneNumber);
+    const logger = pino({ level: 'silent' });
+    const msgRetryCounterCache = new NodeCache({ stdTTL: 180, checkperiod: 60 });
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
+
+    const sock = makeWASocket({
+      version,
+      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
+      logger,
+      printQRInTerminal: false,
+      browser: Browsers.ubuntu('Chrome'),
+      msgRetryCounterCache,
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 0,
+      keepAliveIntervalMs: 25000,
+      markOnlineOnConnect: true
     });
 
-    // 📩 Dynamic Command Router
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      const msg = messages[0];
-      if (!msg || !msg.message) return;
-
-      const chatJid = msg.key.remoteJid;
-      if (!chatJid || chatJid === 'status@broadcast') return;
-
-      const isGroup = chatJid.endsWith('@g.us');
-      const senderJid = msg.key.fromMe
-        ? (sock.user?.id || '')
-        : (isGroup ? (msg.key.participant || msg.participant || '') : chatJid);
-
-      const senderNum = senderJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-      const isOwner = senderNum === OWNER_NUMBER || msg.key.fromMe;
-
-      const text = (
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        msg.message.imageMessage?.caption ||
-        msg.message.videoMessage?.caption ||
-        ''
-      ).trim();
-
-      if (!text) return;
-
-      const prefixMatch = text.match(/^[./!#]/);
-      const prefix = prefixMatch ? prefixMatch[0] : '';
-      const cleanText = prefixMatch ? text.slice(prefix.length).trim() : text.trim();
-      const args = cleanText.split(/ +/);
-      const commandName = args.shift().toLowerCase();
-
-      const cmd = commands.get(commandName);
-      if (cmd && typeof cmd.execute === 'function') {
-        try {
-          await cmd.execute(sock, msg, args, {
-            chatJid,
-            isGroup,
-            isOwner,
-            senderNum,
-            senderJid,
-            botName: BOT_NAME,
-            prefix
-          });
-        } catch (err) {
-          console.error(`Command execution error (${commandName}):`, err.message);
-        }
-      }
-    });
+    sock.ev.on('creds.update', saveCreds);
+    bindSocketEvents(sock, phoneNumber);
 
     return sock;
   } catch (err) {
@@ -535,29 +539,17 @@ function registerHttpRoutes(app) {
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         logger,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Safari'),
-        connectTimeoutMs: 30000,
-        defaultQueryTimeoutMs: 20000,
+        browser: Browsers.ubuntu('Chrome'),
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
         keepAliveIntervalMs: 25000,
-        emitOwnEvents: false
+        markOnlineOnConnect: true
       });
 
       pairSock.ev.on('creds.update', saveCreds);
+      bindSocketEvents(pairSock, num);
 
-      pairSock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'open') {
-          activeSessions[num] = pairSock;
-          console.log(`✅ [${BOT_NAME}] PAIRED & CONNECTED: ${num}`);
-        } else if (connection === 'close') {
-          const code = lastDisconnect?.error?.output?.statusCode;
-          if (code !== DisconnectReason.loggedOut && code !== 401) {
-            setTimeout(() => initWhatsApp(num), 5000);
-          }
-        }
-      });
-
-      await delay(1500);
+      await delay(3000);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -565,13 +557,14 @@ function registerHttpRoutes(app) {
         return res.json({ code });
       } else {
         await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
-        return res.status(400).json({ error: 'Session cleared! Please try again.' });
+        return res.status(400).json({ error: 'Session already registered. Clean and try again.' });
       }
     } catch (err) {
+      console.error('Pairing Code Error:', err);
       if (pairSock) {
         try { pairSock.ws?.close(); } catch (e) {}
       }
-      return res.status(500).json({ error: 'Rate-limited. Wait 15 seconds and retry.' });
+      return res.status(500).json({ error: 'Failed to generate code. Wait 10 seconds and retry.' });
     }
   });
 }
