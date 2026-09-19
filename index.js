@@ -28,8 +28,8 @@ try {
   configUri = config.MONGODB_URI;
 } catch (e) {}
 
-// අලුත් MongoDB Connection String එක මෙතැනට සකසන ලදී:
-const MONGODB_URI = process.env.MONGODB_URI || configUri || 'mongodb+srv://diniduheshan40_db_user:nziBElbMabqIwsol@cluster0.5gazebm.mongodb.net/?appName=Cluster0';
+// MongoDB Connection String එක අලුත් Password එක (Heshan2007) සමඟ මෙහි සකසා ඇත:
+const MONGODB_URI = process.env.MONGODB_URI || configUri || 'mongodb+srv://diniduheshan40_db_user:Heshan2007@cluster0.5gazebm.mongodb.net/?appName=Cluster0';
 const { useMongoDBAuthState, Auth } = require('./auth');
 
 const BOT_NAME = 'HESHAN MD V1';
