@@ -7,7 +7,6 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 const NodeCache = require('node-cache');
-const fetch = require('node-fetch');
 const {
   default: makeWASocket,
   DisconnectReason,
