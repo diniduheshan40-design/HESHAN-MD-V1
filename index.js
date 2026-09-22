@@ -223,7 +223,7 @@ function renderPortalHtml(botName) {
               navigator.clipboard.writeText(data.code).catch(()=>{});
               alert('✅ Pairing Code: ' + data.code + '\\n\\nWhatsApp එකෙහි Link with phone number වෙත දමන්න!');
             } else {
-              alert(data.error || 'Connection busy. Please wait 10 seconds and retry.');
+              alert(data.error || 'Connection busy. Please wait 15 seconds and retry.');
             }
           } catch(e) {
             alert('Server connection error. Refresh page and retry!');
@@ -264,7 +264,7 @@ function registerPortalRoute(app) {
 }
 
 // ============================================================================
-// 🔌 SOCKET CREATION (Working Setup)
+// 🔌 SOCKET CREATION
 // ============================================================================
 
 async function createBaileysSocket(phoneNumber) {
@@ -440,7 +440,7 @@ async function initWhatsApp(phoneNumber) {
 }
 
 // ============================================================================
-// 🌐 HTTP ROUTES (Working Pairing Engine)
+// 🌐 HTTP ROUTES
 // ============================================================================
 
 function stopAndRemoveSession(num) {
@@ -524,7 +524,8 @@ function registerPairRoute(app) {
         }
       });
 
-      await delay(3000);
+      // WebSocket Handshake එක WhatsApp server එකට ස්ථාවරව සම්බන්ධ වීමට තත්පර 6ක් රැඳී සිටීම
+      await delay(6000);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -543,7 +544,7 @@ function registerPairRoute(app) {
         } catch (e) {}
       }
       return res.status(500).json({
-        error: 'Pairing code generation failed. WhatsApp server rate-limit or network delay. Wait 15 seconds and retry.'
+        error: 'WhatsApp Rate-limit හෝ delay එකක් ඇත. තත්පර 30ක් සිට නැවත උත්සාහ කරන්න.'
       });
     }
   });
@@ -556,7 +557,7 @@ function registerAllHttpRoutes(app) {
 }
 
 // ============================================================================
-// 🔁 KEEP-ALIVE (WAKE SERVER EVERY 2 MINUTES)
+// 🔁 KEEP-ALIVE
 // ============================================================================
 
 function startKeepAlivePing() {
