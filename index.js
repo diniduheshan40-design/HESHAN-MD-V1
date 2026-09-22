@@ -17,10 +17,10 @@ const {
 
 // 🟢 Global Process Crash Guards
 process.on('uncaughtException', (err) => {
-  console.error('🛡️ Uncaught Exception Guard:', err?.message || err);
+  console.error('🛡️ Uncaught Exception:', err?.message || err);
 });
 process.on('unhandledRejection', (err) => {
-  console.error('🛡️ Unhandled Rejection Guard:', err?.message || err);
+  console.error('🛡️ Unhandled Rejection:', err?.message || err);
 });
 
 // 🟢 Configuration
@@ -207,7 +207,7 @@ function renderPortalHtml(botName) {
       <script>
         async function fetchPairCode() {
           const phone = document.getElementById('phone').value.replace(/[^0-9]/g, '');
-          if (!phone || phone.length < 10) return alert('කරුණාකර නිවැරදි Country Code සහිත අංකය ඇතුළත් කරන්න!');
+          if (!phone || phone.length < 10) return alert('කරුණාකර Country Code සහිතව අංකය ඇතුළත් කරන්න!');
           const btn = document.getElementById('btn');
           const wrapper = document.getElementById('codeWrapper');
           const display = document.getElementById('codeDisplay');
@@ -223,32 +223,30 @@ function renderPortalHtml(botName) {
               navigator.clipboard.writeText(data.code).catch(()=>{});
               alert('✅ Pairing Code: ' + data.code + '\\n\\nWhatsApp එකෙහි Link with phone number වෙත දමන්න!');
             } else {
-              alert(data.error || 'Connection busy. Please wait 15 seconds and retry.');
+              alert(data.error || 'Connection busy. Please wait a moment and retry.');
             }
           } catch(e) {
-            alert('Server connection error. Refresh page and retry!');
+            alert('Server error. Refresh page and retry!');
           }
           btn.innerText = 'GET PAIRING CODE';
           btn.disabled = false;
         }
         async function cleanSessionSlot() {
           const phone = document.getElementById('phone').value.replace(/[^0-9]/g, '');
-          if (!phone) return alert('Clean කිරීමට Phone Number එක ඇතුළත් කරන්න!');
-          if (confirm('+' + phone + ' සඳහා පැරණි session එක සම්පූර්ණයෙන්ම Clean කරන්නද?')) {
-            try {
-              const res = await fetch('/reset-num?num=' + phone);
-              const data = await res.json();
-              if (data.success) alert('✅ Session Cleared! දැන් අලුතින් Code එකක් ගන්න.');
-            } catch(e) {
-              alert('Clean request failed!');
-            }
+          if (!phone) return alert('Phone Number එක ඇතුළත් කරන්න!');
+          try {
+            const res = await fetch('/reset-num?num=' + phone);
+            const data = await res.json();
+            if (data.success) alert('✅ Session Cleared! දැන් අලුතින් Code ලබාගන්න.');
+          } catch(e) {
+            alert('Clean request failed!');
           }
         }
         function copyCode() {
           const code = document.getElementById('codeDisplay').innerText;
           if (code) {
             navigator.clipboard.writeText(code);
-            alert('✅ Copied to clipboard: ' + code);
+            alert('✅ Copied: ' + code);
           }
         }
       </script>
@@ -264,7 +262,7 @@ function registerPortalRoute(app) {
 }
 
 // ============================================================================
-// 🔌 SOCKET CREATION
+// 🔌 SOCKET CREATION & CONNECTION HANDLERS
 // ============================================================================
 
 async function createBaileysSocket(phoneNumber) {
@@ -281,7 +279,6 @@ async function createBaileysSocket(phoneNumber) {
     syncFullHistory: false,
     shouldSyncHistoryMessage: () => false,
     fireInitQueries: true,
-    generateHighQualityLinkPreview: false,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     keepAliveIntervalMs: 25000,
@@ -293,10 +290,6 @@ async function createBaileysSocket(phoneNumber) {
   sock.ev.on('creds.update', saveCreds);
   return { sock, clearSessionData };
 }
-
-// ============================================================================
-// 🔄 CONNECTION LIFECYCLE
-// ============================================================================
 
 async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSessionData) {
   const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -310,24 +303,16 @@ async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSes
   delete activeSessions[phoneNumber];
 
   if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-    console.log(`❌ Permanent session logout: ${phoneNumber}`);
+    console.log(`❌ Permanent logout: ${phoneNumber}`);
     delete reconnectAttempts[phoneNumber];
     if (typeof clearSessionData === 'function') await clearSessionData();
     return;
   }
 
   reconnectAttempts[phoneNumber] = (reconnectAttempts[phoneNumber] || 0) + 1;
-  let delayTime = 6000;
-
-  if (statusCode === 440) {
-    delayTime = Math.min(reconnectAttempts[phoneNumber] * 12000, 45000);
-  } else if (reconnectAttempts[phoneNumber] > 5) {
-    delayTime = 25000;
-  }
-
   setTimeout(() => {
     initWhatsApp(phoneNumber);
-  }, delayTime);
+  }, 6000);
 }
 
 function handleConnectionOpen(sock, phoneNumber) {
@@ -347,7 +332,7 @@ function registerConnectionUpdateHandler(sock, phoneNumber, clearSessionData) {
 }
 
 // ============================================================================
-// 💬 MESSAGE HANDLING (Commands / Ping Handler)
+// 💬 MESSAGE HANDLING (Ping & Commands)
 // ============================================================================
 
 function extractMessageText(rawMsg) {
@@ -401,7 +386,7 @@ async function processSingleMessage(sock, msg) {
     try {
       await executor(sock, msg, args, chatJid, safeReply, { isOwner: true, isGroup: chatJid.endsWith('@g.us') });
     } catch (err) {
-      console.error(`Command [${commandName}] execution error:`, err?.message);
+      console.error(`Command [${commandName}] error:`, err?.message);
     }
   }
 }
@@ -414,10 +399,6 @@ function registerMessageUpsertHandler(sock) {
     }
   });
 }
-
-// ============================================================================
-// 🚀 MAIN WHATSAPP INITIALIZER
-// ============================================================================
 
 async function initWhatsApp(phoneNumber) {
   if (activeSessions[phoneNumber]) return activeSessions[phoneNumber];
@@ -440,7 +421,7 @@ async function initWhatsApp(phoneNumber) {
 }
 
 // ============================================================================
-// 🌐 HTTP ROUTES
+// 🌐 HTTP ROUTES (Robust Pairing Engine)
 // ============================================================================
 
 function stopAndRemoveSession(num) {
@@ -484,9 +465,7 @@ function registerPairRoute(app) {
 
     try {
       await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
-    } catch (e) {
-      console.error('Session reset error:', e.message);
-    }
+    } catch (e) {}
 
     let pairSock = null;
 
@@ -524,8 +503,8 @@ function registerPairRoute(app) {
         }
       });
 
-      // WebSocket Handshake එක WhatsApp server එකට ස්ථාවරව සම්බන්ධ වීමට තත්පර 6ක් රැඳී සිටීම
-      await delay(6000);
+      // WebSocket Handshake Delay: Render IP handshake එක stabilize වීමට
+      await delay(4000);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -533,7 +512,7 @@ function registerPairRoute(app) {
         return res.json({ code });
       } else {
         await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
-        return res.status(400).json({ error: 'Session conflict detected. Please click button again!' });
+        return res.status(400).json({ error: 'Session conflict. Click clean and try again!' });
       }
     } catch (err) {
       console.error(`❌ Pairing Error for ${num}:`, err?.message || err);
@@ -544,7 +523,7 @@ function registerPairRoute(app) {
         } catch (e) {}
       }
       return res.status(500).json({
-        error: 'WhatsApp Rate-limit හෝ delay එකක් ඇත. තත්පර 30ක් සිට නැවත උත්සාහ කරන්න.'
+        error: 'WhatsApp Rate-limit. විනාඩියක් රැඳී සිට නැවත උත්සාහ කරන්න.'
       });
     }
   });
@@ -572,7 +551,7 @@ function startKeepAlivePing() {
 }
 
 // ============================================================================
-// 🍃 STARTUP
+// 🍃 STARTUP (PORT FIRST - ZERO FREEZE)
 // ============================================================================
 
 async function reconnectAllSavedSessions() {
@@ -598,23 +577,21 @@ async function startServer() {
   loadAllCommands();
   registerAllHttpRoutes(app);
 
+  // Render Port එක මුලින්ම Listen කිරීම (Deploy එක instant Live වේ)
   app.listen(port, () => {
     console.log(`🚀 [${BOT_NAME}] Server running on port ${port}`);
     startKeepAlivePing();
   });
 
-  await reconnectAllSavedSessions();
-}
-
-async function main() {
+  // Background MongoDB Connection
   try {
     await mongoose.connect(MONGODB_URI);
     console.log('🍃 MongoDB Connected!');
-    await startServer();
+    await reconnectAllSavedSessions();
   } catch (err) {
-    console.error('MongoDB Connection Error:', err);
+    console.error('MongoDB Connection Error:', err?.message || err);
   }
 }
 
-main();
+startServer();
 
