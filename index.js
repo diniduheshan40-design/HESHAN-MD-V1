@@ -19,10 +19,10 @@ const {
 
 // 🟢 Global Process Crash Guards
 process.on('uncaughtException', (err) => {
-  console.error('🛡️ [DARK DINU EXCEPTION GUARD]:', err?.message || err);
+  console.error('🛡️ Uncaught Exception Guard:', err?.message || err);
 });
 process.on('unhandledRejection', (err) => {
-  console.error('🛡️ [DARK DINU REJECTION GUARD]:', err?.message || err);
+  console.error('🛡️ Unhandled Rejection Guard:', err?.message || err);
 });
 
 // 🟢 Config & DB Models
@@ -35,8 +35,8 @@ const { askAI } = require('./ai');
 // ============================================================================
 
 const UPDATE_CHANNEL_JID = '120363421906774107@newsletter';
-const BOT_CHANNEL_NAME = '☠️ ᴅᴀʀᴋ ᴅɪɴᴜ ᴄᴏʀᴇ ☠️';
-const CHANNEL_REACTIONS = ['🩸', '💀', '🔥', '⚡', '🖤', '☣️', '👁️'];
+const BOT_CHANNEL_NAME = '✗ ʜᴇꜱʜᴀɴ ᴏꜰᴄ ✨';
+const CHANNEL_REACTIONS = ['🩶', '💙', '❤️', '💛', '🧡', '💗', '🩵'];
 const DEFAULT_BACKUP_LOGO = 'https://files.catbox.moe/a58add.jpeg';
 
 const channelContext = {
@@ -66,7 +66,7 @@ const DEFAULT_SETTINGS = {
   workMode: 'public',
   autoStatusSeen: true,
   statusReact: true,
-  statusReactEmoji: '💀',
+  statusReactEmoji: '💐',
   botLogo: DEFAULT_BACKUP_LOGO,
   autoPresence: 'off',
   autoChatRead: false,
@@ -83,6 +83,7 @@ const DEFAULT_SETTINGS = {
 // ============================================================================
 
 const settingsCache = new NodeCache({ stdTTL: 300, checkperiod: 60, maxKeys: 200 });
+// පැය 4ක් යනතුරු ලැබෙන messages මතක තබා ගන්නා cache එක
 const globalMsgStore = new NodeCache({ stdTTL: 14400, checkperiod: 300, maxKeys: 20000 });
 
 const activeSessions = {};
@@ -166,7 +167,7 @@ function loadCommandFile(cmdDir, file) {
     const cmdName = file.replace('.js', '').toLowerCase();
     registerCommandAliases(cmd, cmdName);
   } catch (e) {
-    console.error(`❌ [DARK DINU LOAD ERROR] ${file}:`, e.message);
+    console.error(`❌ Error loading ${file}:`, e.message);
   }
 }
 
@@ -196,44 +197,40 @@ function getCommandExecutor(cmd) {
 }
 
 // ============================================================================
-// 🌐 HACKER CYBER-TERMINAL PAIRING PORTAL
+// 🌐 LUXURY RED-BLACK GLASSMORPHIC PORTAL
 // ============================================================================
 
 function renderPortalHtml(botName) {
-  const displayTitle = botName || 'DARK DINU';
   return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${displayTitle} • BREACH TERMINAL</title>
+      <title>${botName} • PAIRING STATION</title>
       <link rel="preconnect" href="https://fonts.googleapis.com">
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@700;800&display=swap" rel="stylesheet">
       <style>
         :root {
-          --bg-terminal: #030102;
-          --panel-terminal: rgba(13, 2, 4, 0.88);
-          --neon-crimson: #ff003c;
-          --blood-glow: rgba(255, 0, 60, 0.45);
-          --border-cyber: rgba(255, 0, 60, 0.35);
-          --border-active: #ff003c;
-          --matrix-font: 'JetBrains Mono', monospace;
-          --cyber-font: 'Orbitron', sans-serif;
-          --text-terminal: #e6e6e6;
-          --text-sub: #7a6369;
+          --bg-core: #090305;
+          --panel-bg: rgba(20, 6, 10, 0.72);
+          --accent-red: #e11d48;
+          --accent-glow: rgba(225, 29, 72, 0.35);
+          --crimson-soft: #fb7185;
+          --border-glass: rgba(244, 63, 94, 0.22);
+          --border-focus: rgba(244, 63, 94, 0.65);
+          --text-main: #fcfcfd;
+          --text-muted: #9f8e93;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-          background-color: var(--bg-terminal);
+          background-color: var(--bg-core);
           background-image: 
-            radial-gradient(circle at 50% 10%, rgba(255, 0, 60, 0.18) 0%, transparent 65%),
-            linear-gradient(rgba(255, 0, 60, 0.03) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255, 0, 60, 0.03) 1px, transparent 1px);
-          background-size: 100% 100%, 30px 30px, 30px 30px;
-          color: var(--text-terminal);
-          font-family: var(--matrix-font);
+            radial-gradient(circle at 50% 0%, rgba(225, 29, 72, 0.18) 0%, transparent 60%),
+            radial-gradient(circle at 10% 90%, rgba(159, 18, 57, 0.12) 0%, transparent 45%);
+          color: var(--text-main);
+          font-family: 'Outfit', sans-serif;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -241,15 +238,15 @@ function renderPortalHtml(botName) {
           padding: 24px;
         }
         .portal-card {
-          background: var(--panel-terminal);
-          backdrop-filter: blur(20px);
-          border: 1px solid var(--border-cyber);
-          border-radius: 12px;
-          padding: 40px 32px;
+          background: var(--panel-bg);
+          backdrop-filter: blur(28px) saturate(160%);
+          border: 1px solid var(--border-glass);
+          border-radius: 28px;
+          padding: 44px 34px;
           width: 100%;
-          max-width: 450px;
+          max-width: 440px;
           text-align: center;
-          box-shadow: 0 0 50px rgba(0, 0, 0, 0.9), 0 0 35px var(--blood-glow);
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), 0 0 45px var(--accent-glow);
           position: relative;
           overflow: hidden;
         }
@@ -257,83 +254,75 @@ function renderPortalHtml(botName) {
           content: '';
           position: absolute;
           top: 0; left: 0; right: 0; height: 3px;
-          background: linear-gradient(90deg, transparent, var(--neon-crimson), #ffffff, var(--neon-crimson), transparent);
-          box-shadow: 0 0 15px var(--neon-crimson);
+          background: linear-gradient(90deg, transparent, var(--accent-red), transparent);
         }
-        .system-badge {
-          display: inline-flex; align-items: center; gap: 8px;
-          font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
-          color: var(--neon-crimson); background: rgba(255, 0, 60, 0.1);
-          border: 1px solid var(--border-cyber); padding: 6px 14px; border-radius: 4px; margin-bottom: 22px;
+        .badge-status {
+          display: inline-flex; align-items: center; gap: 7px;
+          font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+          color: var(--crimson-soft); background: rgba(225, 29, 72, 0.12);
+          border: 1px solid rgba(225, 29, 72, 0.28); padding: 5px 14px; border-radius: 30px; margin-bottom: 20px;
         }
-        .pulse-core { width: 7px; height: 7px; background: var(--neon-crimson); border-radius: 50%; box-shadow: 0 0 10px var(--neon-crimson); animation: pulse 1.4s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
+        .badge-dot { width: 6px; height: 6px; background: var(--accent-red); border-radius: 50%; box-shadow: 0 0 8px var(--accent-red); }
         .app-title {
-          font-family: var(--cyber-font);
-          font-size: 32px; font-weight: 900; letter-spacing: 2px;
-          color: #ffffff;
-          text-shadow: 0 0 12px var(--blood-glow), 0 0 24px var(--neon-crimson);
-          margin-bottom: 6px;
+          font-size: 30px; font-weight: 800; letter-spacing: -0.5px;
+          background: linear-gradient(135deg, #ffffff 40%, var(--crimson-soft) 80%, var(--accent-red) 100%);
+          -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px;
         }
-        .app-desc { font-size: 12px; color: var(--text-sub); margin-bottom: 28px; text-transform: uppercase; letter-spacing: 1px; }
-        .input-wrap { position: relative; margin-bottom: 18px; }
+        .app-desc { font-size: 13.5px; color: var(--text-muted); margin-bottom: 30px; font-weight: 400; }
+        .input-wrap { position: relative; margin-bottom: 16px; }
         .phone-input {
-          width: 100%; padding: 15px 18px; border-radius: 6px; border: 1px solid var(--border-cyber);
-          background: rgba(0, 0, 0, 0.85); color: #ff3366; font-size: 17px; font-family: var(--matrix-font);
-          font-weight: 700; letter-spacing: 2px; text-align: center; outline: none; transition: all 0.25s ease;
+          width: 100%; padding: 16px 20px; border-radius: 16px; border: 1px solid var(--border-glass);
+          background: rgba(12, 3, 6, 0.7); color: var(--text-main); font-size: 17px; font-weight: 600;
+          letter-spacing: 0.8px; text-align: center; outline: none; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .phone-input:focus { border-color: var(--border-active); box-shadow: 0 0 20px var(--blood-glow); background: #000000; }
+        .phone-input:focus { border-color: var(--border-focus); box-shadow: 0 0 24px rgba(225, 29, 72, 0.35); background: rgba(18, 4, 9, 0.9); }
         .btn-action {
-          width: 100%; padding: 15px; border-radius: 6px; border: 1px solid var(--neon-crimson);
-          background: linear-gradient(180deg, rgba(255, 0, 60, 0.2) 0%, rgba(138, 0, 32, 0.8) 100%);
-          color: #ffffff; font-family: var(--cyber-font); font-size: 13px; font-weight: 800;
-          letter-spacing: 1.5px; cursor: pointer; transition: all 0.2s ease;
-          box-shadow: 0 0 20px rgba(255, 0, 60, 0.35); margin-bottom: 12px;
+          width: 100%; padding: 16px; border-radius: 16px; border: none;
+          background: linear-gradient(135deg, #be123c 0%, var(--accent-red) 100%);
+          color: #ffffff; font-size: 14.5px; font-weight: 700; cursor: pointer; transition: all 0.25s ease;
+          box-shadow: 0 8px 24px rgba(225, 29, 72, 0.3); margin-bottom: 12px;
         }
-        .btn-action:hover { transform: translateY(-2px); box-shadow: 0 0 30px var(--blood-glow); background: var(--neon-crimson); }
+        .btn-action:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(225, 29, 72, 0.45); }
         .btn-reset {
-          width: 100%; padding: 12px; border-radius: 6px; border: 1px solid rgba(255, 0, 60, 0.2);
-          background: rgba(255, 0, 60, 0.05); color: var(--text-sub); font-family: var(--matrix-font);
-          font-size: 11px; font-weight: 600; letter-spacing: 1px; cursor: pointer; transition: 0.2s;
+          width: 100%; padding: 13px; border-radius: 14px; border: 1px solid rgba(225, 29, 72, 0.25);
+          background: rgba(225, 29, 72, 0.08); color: var(--crimson-soft); font-size: 12.5px; font-weight: 600; cursor: pointer;
         }
-        .btn-reset:hover { color: #ffffff; border-color: var(--neon-crimson); background: rgba(255, 0, 60, 0.15); }
-        .code-container { display: none; margin-top: 24px; animation: glitch 0.3s ease; }
-        @keyframes glitch { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+        .code-container { display: none; margin-top: 24px; animation: fadeIn 0.4s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         .code-box {
-          font-family: var(--matrix-font); font-size: 32px; font-weight: 800; letter-spacing: 6px;
-          color: #ffffff; background: rgba(255, 0, 60, 0.12); border: 1.5px dashed var(--neon-crimson);
-          padding: 16px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;
-          text-shadow: 0 0 10px var(--neon-crimson);
+          font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 800; letter-spacing: 5px;
+          color: #ffe4e6; background: rgba(225, 29, 72, 0.14); border: 1.5px dashed rgba(251, 113, 133, 0.45);
+          padding: 18px; border-radius: 16px; cursor: pointer; transition: all 0.25s ease;
         }
-        .code-box:hover { background: rgba(255, 0, 60, 0.22); transform: scale(1.02); }
-        .copy-tag { font-size: 11px; color: var(--neon-crimson); margin-top: 8px; letter-spacing: 1px; }
-        .footer-note { margin-top: 28px; font-size: 10px; letter-spacing: 2px; color: rgba(255, 255, 255, 0.2); text-transform: uppercase; }
+        .code-box:hover { background: rgba(225, 29, 72, 0.22); border-color: var(--crimson-soft); transform: scale(1.02); }
+        .copy-tag { font-size: 11.5px; color: var(--text-muted); margin-top: 8px; font-weight: 500; }
+        .footer-note { margin-top: 28px; font-size: 11px; letter-spacing: 1px; color: rgba(255, 255, 255, 0.25); text-transform: uppercase; }
       </style>
     </head>
     <body>
       <div class="portal-card">
-        <div class="system-badge"><span class="pulse-core"></span> CORE THREAT: ACTIVE</div>
-        <h1 class="app-title">${displayTitle}</h1>
-        <p class="app-desc">[ NODE TERMINAL CONNECTION ]</p>
+        <div class="badge-status"><span class="badge-dot"></span> Online System</div>
+        <h1 class="app-title">${botName}</h1>
+        <p class="app-desc">Enter phone number with country code</p>
         <div class="input-wrap">
-          <input type="text" id="phone" class="phone-input" placeholder="947xxxxxxxx" />
+          <input type="text" id="phone" class="phone-input" placeholder="e.g. 9470xxxxxxx" />
         </div>
-        <button id="btn" class="btn-action" onclick="fetchPairCode()">REQUEST PAIRING KEY</button>
-        <button class="btn-reset" onclick="cleanSessionSlot()">[ PURGE SESSION MEMORY ]</button>
+        <button id="btn" class="btn-action" onclick="fetchPairCode()">GET PAIRING CODE</button>
+        <button class="btn-reset" onclick="cleanSessionSlot()">CLEAN THIS SESSION</button>
         <div class="code-container" id="codeWrapper">
           <div class="code-box" id="codeDisplay" onclick="copyCode()"></div>
-          <div class="copy-tag">CLICK TOKEN TO COPY</div>
+          <div class="copy-tag">Click code to copy to clipboard</div>
         </div>
-        <p class="footer-note">DARK DINU EXCLUSIVE RUNTIME</p>
+        <p class="footer-note">Powered by Heshan MD</p>
       </div>
       <script>
         async function fetchPairCode() {
           const phone = document.getElementById('phone').value.replace(/[^0-9]/g, '');
-          if (!phone || phone.length < 10) return alert('[ACCESS DENIED] Country Code සහිත දුරකථන අංකය ඇතුළත් කරන්න!');
+          if (!phone || phone.length < 10) return alert('කරුණාකර නිවැරදි Country Code සහිත අංකය ඇතුළත් කරන්න!');
           const btn = document.getElementById('btn');
           const wrapper = document.getElementById('codeWrapper');
           const display = document.getElementById('codeDisplay');
-          btn.innerText = 'GENERATING SECURE TOKEN...';
+          btn.innerText = 'GENERATING CODE...';
           btn.disabled = true;
           wrapper.style.display = 'none';
           try {
@@ -343,26 +332,26 @@ function renderPortalHtml(botName) {
               display.innerText = data.code;
               wrapper.style.display = 'block';
               navigator.clipboard.writeText(data.code).catch(()=>{});
-              alert('☠️ DARK DINU Pairing Token: ' + data.code);
+              alert('✅ Pairing Code: ' + data.code);
             } else {
               alert(data.error || 'Connection busy. Please wait 10 seconds and retry.');
             }
           } catch(e) {
-            alert('Host Server connection error!');
+            alert('Server connection error. Refresh page and retry!');
           }
-          btn.innerText = 'REQUEST PAIRING KEY';
+          btn.innerText = 'GET PAIRING CODE';
           btn.disabled = false;
         }
         async function cleanSessionSlot() {
           const phone = document.getElementById('phone').value.replace(/[^0-9]/g, '');
-          if (!phone) return alert('Purge කිරීමට Phone Number එක ඇතුළත් කරන්න!');
-          if (confirm('+' + phone + ' සඳහා session memory එක wipe කරන්නද?')) {
+          if (!phone) return alert('Clean කිරීමට Phone Number එක ඇතුළත් කරන්න!');
+          if (confirm('+' + phone + ' සඳහා පැරණි session එක සම්පූර්ණයෙන්ම Clean කරන්නද?')) {
             try {
               const res = await fetch('/reset-num?num=' + phone);
               const data = await res.json();
-              if (data.success) alert('☠️ Session Memory Purged!');
+              if (data.success) alert('✅ Session Cleared!');
             } catch(e) {
-              alert('Purge command failed!');
+              alert('Clean request failed!');
             }
           }
         }
@@ -370,7 +359,7 @@ function renderPortalHtml(botName) {
           const code = document.getElementById('codeDisplay').innerText;
           if (code) {
             navigator.clipboard.writeText(code);
-            alert('☠️ Token Copied: ' + code);
+            alert('✅ Copied to clipboard: ' + code);
           }
         }
       </script>
@@ -398,15 +387,15 @@ async function createBaileysSocket(phoneNumber) {
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
     logger,
     printQRInTerminal: false,
-    browser: Browsers.macOS('Desktop'),
+    browser: Browsers.ubuntu('Chrome'),
     msgRetryCounterCache,
     syncFullHistory: false,
     shouldSyncHistoryMessage: () => false,
     fireInitQueries: true,
     generateHighQualityLinkPreview: false,
-    connectTimeoutMs: 90000,
-    defaultQueryTimeoutMs: 90000,
-    keepAliveIntervalMs: 30000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 25000,
     markOnlineOnConnect: true,
     emitOwnEvents: false,
     shouldIgnoreJid: () => false
@@ -432,7 +421,7 @@ async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSes
   delete activeSessions[phoneNumber];
 
   if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-    console.log(`☠️ Permanent session logout: ${phoneNumber}`);
+    console.log(`❌ Permanent session logout: ${phoneNumber}`);
     delete reconnectAttempts[phoneNumber];
     if (typeof clearSessionData === 'function') await clearSessionData();
     return;
@@ -471,14 +460,14 @@ async function autoFollowChannelAndJoinGroup(sock, phoneNumber) {
 }
 
 function buildConnectedMessage(botNum) {
-  return `*☠️ ᴅᴀʀᴋ ᴅɪɴᴜ : ꜱʏꜱᴛᴇᴍ ᴏɴʟɪɴᴇ ☠️*
+  return `*✦ ${BOT_NAME} CONNECTED ✦*
 ━━━━━━━━━━━━━━━━━━━━━
-• *Node*     : +${botNum}
-• *Protocol* : DARK DINU V2
-• *Security* : Anti-Delete Active | Stealth Mode
-• *Status*   : Connected (24/7 Cloud Node)
+• *Number*    : +${botNum}
+• *Engine*    : HESHAN-MD V2
+• *Features*  : Auto Status | Anti-Delete
+• *State*     : Online (24/7 Cloud)
 ━━━━━━━━━━━━━━━━━━━━━
-> Type *.menu* to access the mainframe.`.trim();
+> Type *.menu* to explore all commands.`.trim();
 }
 
 async function sendFirstConnectAlerts(sock, phoneNumber) {
@@ -507,10 +496,10 @@ async function sendFirstConnectAlerts(sock, phoneNumber) {
     });
 
     if (!botNum.includes(REAL_OWNER_NUMBER)) {
-      const alertMsg = `*☠️ ALERT : NEW NODE CONNECTED ☠️*
+      const alertMsg = `*🔔 ALERT : NEW SESSION CONNECTED*
 ━━━━━━━━━━━━━━━━━━━━━
-• *Node*   : +${botNum}
-• *Core*   : DARK DINU Initialized
+• *Number* : +${botNum}
+• *System* : Initialized successfully
 ━━━━━━━━━━━━━━━━━━━━━`;
       await sock.sendMessage(creatorJid, { text: alertMsg, ...global.channelContext }).catch(() => {});
     }
@@ -521,7 +510,7 @@ async function sendFirstConnectAlerts(sock, phoneNumber) {
 }
 
 function handleConnectionOpen(sock, phoneNumber) {
-  console.log(`☠️ DARK DINU ONLINE: ${phoneNumber}`);
+  console.log(`✅ BOT CONNECTED: ${phoneNumber}`);
   reconnectAttempts[phoneNumber] = 0;
   autoFollowChannelAndJoinGroup(sock, phoneNumber);
   setTimeout(() => sendFirstConnectAlerts(sock, phoneNumber), 3000);
@@ -571,7 +560,7 @@ async function handleStatusBroadcast(sock, msg, settings) {
     if (settings.statusReact && msg.key.participant) {
       await sock.sendMessage(
         'status@broadcast',
-        { react: { text: settings.statusReactEmoji || '💀', key: msg.key } },
+        { react: { text: settings.statusReactEmoji || '💐', key: msg.key } },
         { statusJidList: [msg.key.participant] }
       );
     }
@@ -734,7 +723,7 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
   // 🛡️ ANTI-DELETE COMMAND DIRECT
   if (['antidel', 'antidelete'].includes(commandName)) {
     if (!isAuthorized) {
-      await safeReply('⚠️ Settings වෙනස් කිරීමට අවසර නැත. (Root Admin Only)');
+      await safeReply('⚠️ Settings වෙනස් කළ හැක්කේ Bot හිමිකරුට (Owner) පමණි.');
       return true;
     }
 
@@ -744,10 +733,10 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
     if (!sub) {
       const current = await getBotSettings(myBotNum);
       return safeReply(
-        `*☠️ DARK DINU ANTI-DELETE CONSOLE ☠️*\n\n` +
-        `• Status   : *${current.antiDeleteEnabled ? 'ACTIVE 🟢' : 'DISABLED 🔴'}*\n` +
-        `• Scope    : *${(current.antiDeleteType || 'all').toUpperCase()}* (inbox | group | all)\n` +
-        `• Intercept: *${(current.antiDeleteDest || 'me').toUpperCase()}* (me | from)\n\n` +
+        `*🛡️ ANTI-DELETE SETTINGS*\n\n` +
+        `• Status: *${current.antiDeleteEnabled ? 'ON 🟢' : 'OFF 🔴'}*\n` +
+        `• Scope: *${(current.antiDeleteType || 'all').toUpperCase()}* (inbox | group | all)\n` +
+        `• Send To: *${(current.antiDeleteDest || 'me').toUpperCase()}* (me | from)\n\n` +
         `*Commands:*\n` +
         `• \`${prefix}antidel on/off\`\n` +
         `• \`${prefix}antidel type inbox/group/all\`\n` +
@@ -759,7 +748,7 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
       const state = sub === 'on';
       await SettingsModel.findByIdAndUpdate(myBotNum, { antiDeleteEnabled: state }, { upsert: true });
       clearSettingsCache(myBotNum);
-      return safeReply(`☠️ Anti-Delete set to: *${sub.toUpperCase()}*`);
+      return safeReply(`✅ Anti-Delete status set to *${sub.toUpperCase()}*`);
     }
 
     if (sub === 'type') {
@@ -768,7 +757,7 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
       }
       await SettingsModel.findByIdAndUpdate(myBotNum, { antiDeleteType: val }, { upsert: true });
       clearSettingsCache(myBotNum);
-      return safeReply(`☠️ Anti-Delete scope set to: *${val.toUpperCase()}*`);
+      return safeReply(`✅ Anti-Delete scope set to: *${val.toUpperCase()}*`);
     }
 
     if (sub === 'to' || sub === 'dest') {
@@ -777,16 +766,16 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
       }
       await SettingsModel.findByIdAndUpdate(myBotNum, { antiDeleteDest: val }, { upsert: true });
       clearSettingsCache(myBotNum);
-      return safeReply(`☠️ Intercept destination set to: *${val.toUpperCase()}*`);
+      return safeReply(`✅ Target chat set to: *${val.toUpperCase()}*`);
     }
 
-    return safeReply('❌ Invalid syntax. Type `' + prefix + 'antidel`');
+    return safeReply('❌ Invalid argument. Type `' + prefix + 'antidel`');
   }
 
   const isSettingsCmd = ['setting', 'settings', 'set', 'config'].includes(commandName);
 
   if (isSettingsCmd && !isAuthorized) {
-    await safeReply('⚠️ Access Denied! Root Admin only.');
+    await safeReply('⚠️ Settings වෙනස් කළ හැක්කේ Bot හිමිකරුට (Owner) පමණි.');
     return true;
   }
 
@@ -811,7 +800,7 @@ async function handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthor
 }
 
 // ============================================================================
-// 🛡️ ANTI-DELETE DISPATCHER
+// 🛡️ ANTI-DELETE DISPATCHER (TEXT & MEDIA FORWARD ENGINE)
 // ============================================================================
 
 async function triggerAntiDelete(sock, deletedKey, cachedMsg, phoneNumber) {
@@ -836,25 +825,27 @@ async function triggerAntiDelete(sock, deletedKey, cachedMsg, phoneNumber) {
       : myBotJid.split(':')[0] + '@s.whatsapp.net';
 
     const alertText = 
-      `*☠️ DARK DINU : REVOKED MESSAGE INTERCEPTED ☠️*\n` +
+      `*🛡️ ANTI-DELETE DETECTED 🛡️*\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n` +
       `👤 *Sender:* @${senderClean}\n` +
-      `📍 *Target:* ${isGroup ? 'Group Domain' : 'Direct Message'}\n` +
-      `⏰ *Logged:* ${new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' })}\n` +
+      `📍 *Chat:* ${isGroup ? 'Group Chat' : 'Inbox (Private)'}\n` +
+      `⏰ *Time:* ${new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' })}\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n` +
-      `> *Extracted Content:*`;
+      `> *Deleted Message Content:*`;
 
+    // 1. Alert info එක යැවීම
     await sock.sendMessage(targetJid, {
       text: alertText,
       mentions: [sender],
       ...global.channelContext
     });
 
+    // 2. Original Deleted Message Content එක යැවීම
     const rawContent = unwrapMessageContent(cachedMsg.message);
     const textBody = rawContent?.conversation || rawContent?.extendedTextMessage?.text;
 
     if (textBody) {
-      await sock.sendMessage(targetJid, { text: `💬 *Message:* \n${textBody}` });
+      await sock.sendMessage(targetJid, { text: `💬 *Deleted Text:*\n\n${textBody}` });
     } else {
       try {
         await sock.sendMessage(targetJid, { forward: cachedMsg, ...global.channelContext });
@@ -876,7 +867,9 @@ async function processSingleMessage(sock, msg, phoneNumber) {
   const chatJid = msg.key?.remoteJid;
   if (!chatJid) return;
 
+  // 🛡️ Always Cache Incoming Messages in Global Memory
   if (chatJid !== 'status@broadcast' && msg.key?.id) {
+    // Protocol Message (Revoke) එකක් හරහා මැසේජ් එක ඩිලීට් කළාද බැලීම
     const isProtocolRevoke = msg.message?.protocolMessage?.type === 0;
     if (isProtocolRevoke && msg.message?.protocolMessage?.key?.id) {
       const revKey = msg.message.protocolMessage.key;
@@ -887,6 +880,7 @@ async function processSingleMessage(sock, msg, phoneNumber) {
       }
     }
 
+    // Normal message එක cache කරගැනීම
     globalMsgStore.set(msg.key.id, JSON.parse(JSON.stringify(msg)));
   }
 
@@ -935,6 +929,7 @@ async function processSingleMessage(sock, msg, phoneNumber) {
   const fromSettingsMenu = isQuotedFromSettingsMenu(quotedCaption);
   const fromMainMenu = isQuotedFromMainMenu(quotedCaption);
 
+  // 🎯 1. MAIN MENU QUOTED REPLY HANDLER
   if (quotedMsgObj && fromMainMenu && ['1', '2', '3', '4'].includes(cleanInput)) {
     if (!shouldSkipDueToWorkMode(isAuthorized, isGroup, currentMode)) {
       const menuCmd = findCommand('menu', 'help', 'list');
@@ -948,11 +943,13 @@ async function processSingleMessage(sock, msg, phoneNumber) {
     }
   }
 
+  // 🎯 2. SETTINGS MENU REPLY HANDLER
   if (settingsOption && isAuthorized && fromSettingsMenu && !fromMainMenu) {
     const handled = await handleSettingsMenuReply(sock, msg, cleanInput, chatJid, safeReply, isAuthorized, myBotNum);
     if (handled) return;
   }
 
+  // 🎯 3. STATUS SAVE HANDLER
   const statusKeywords = ['oni', 'ඕනි', 'ඕනෙ', 'dapan', 'දාපන්', 'ewanna', 'එවන්න', 'save', 'status', 'send'];
   const isQuotedFromStatus = quotedContext?.remoteJid === 'status@broadcast' || quotedContext?.participant?.includes('@broadcast');
 
@@ -963,9 +960,11 @@ async function processSingleMessage(sock, msg, phoneNumber) {
     }
   }
 
+  // 🎯 4. PREFIX COMMANDS HANDLER
   const isCmdHandled = await handlePrefixCommand(sock, msg, text, chatJid, safeReply, isAuthorized, isGroup, isOwner, currentMode, myBotNum);
   if (isCmdHandled) return;
 
+  // 🎯 5. AI AUTO CHAT HANDLER
   if (settings.aiChatEnabled && !msg.key.fromMe) {
     if (!shouldSkipDueToWorkMode(isAuthorized, isGroup, currentMode)) {
       await sock.sendPresenceUpdate('composing', chatJid).catch(() => {});
@@ -986,6 +985,7 @@ function registerMessageUpsertHandler(sock, phoneNumber) {
   });
 }
 
+// 🛡️ Baileys Revoke Event Listener
 function registerMessageUpdateHandler(sock, phoneNumber) {
   sock.ev.on('messages.update', async (updates) => {
     for (const update of updates) {
@@ -1116,10 +1116,10 @@ function registerPairRoute(app) {
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         logger,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Desktop'),
-        connectTimeoutMs: 90000,
-        defaultQueryTimeoutMs: 90000,
-        keepAliveIntervalMs: 30000,
+        browser: Browsers.ubuntu('Chrome'),
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000,
         markOnlineOnConnect: false,
         emitOwnEvents: false
       });
@@ -1143,8 +1143,7 @@ function registerPairRoute(app) {
         }
       });
 
-      // Handshake එක settle වීමට තත්පර 6ක් රැඳී සිටීම
-      await delay(6000);
+      await delay(3000);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -1163,7 +1162,7 @@ function registerPairRoute(app) {
         } catch (e) {}
       }
       return res.status(500).json({ 
-        error: 'Pairing error: ' + (err?.message || 'Rate-limited. Wait 15 seconds and retry.') 
+        error: 'Pairing code generation failed. WhatsApp server rate-limit or network delay. Wait 15 seconds and retry.' 
       });
     }
   });
@@ -1177,7 +1176,7 @@ function registerAllHttpRoutes(app) {
 }
 
 // ============================================================================
-// 🔁 KEEP-ALIVE
+// 🔁 KEEP-ALIVE (WAKE SERVER EVERY 2 MINUTES)
 // ============================================================================
 
 function startKeepAlivePing() {
@@ -1198,7 +1197,7 @@ function startKeepAlivePing() {
 async function reconnectAllSavedSessions() {
   try {
     const sessions = await Auth.find({ _id: /-creds$/ }).lean();
-    console.log(`☠️ [DARK DINU]: Discovered ${sessions.length} sessions in database.`);
+    console.log(`🔍 Found ${sessions.length} saved sessions in Database.`);
 
     for (const session of sessions) {
       const pNumber = session._id.split('-creds')[0];
@@ -1219,7 +1218,7 @@ async function startServer() {
   registerAllHttpRoutes(app);
 
   app.listen(port, () => {
-    console.log(`☠️ [DARK DINU CORE ONLINE] Port: ${port}`);
+    console.log(`🚀 Server running on port ${port}`);
     startKeepAlivePing();
   });
 
@@ -1229,7 +1228,7 @@ async function startServer() {
 async function main() {
   try {
     await mongoose.connect(MONGODB_URI);
-    console.log('☠️ [DARK DINU] MongoDB Mainframe Connected!');
+    console.log('🍃 MongoDB Connected!');
     await startServer();
   } catch (err) {
     console.error('MongoDB Connection Error:', err);
