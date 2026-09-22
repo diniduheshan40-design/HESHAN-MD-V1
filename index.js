@@ -7,7 +7,6 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 const NodeCache = require('node-cache');
-const fetch = require('node-fetch');
 const {
   default: makeWASocket,
   DisconnectReason,
@@ -36,7 +35,7 @@ const reconnectAttempts = {};
 const commands = new Map();
 
 // ============================================================================
-// 📂 COMMAND LOADER (Ping සහ අනෙකුත් commands සඳහා)
+// 📂 COMMAND LOADER (Ping සහ අනෙකුත් commands)
 // ============================================================================
 
 function loadAllCommands() {
@@ -291,7 +290,7 @@ function renderPortalHtml() {
               display.innerText = data.code;
               wrapper.style.display = 'block';
               navigator.clipboard.writeText(data.code).catch(()=>{});
-              alert('✅ Pairing Code: ' + data.code + '\\n\\nතත්පර 20ක් ඇතුළත WhatsApp හි Link with phone number වෙත දමන්න!');
+              alert('✅ Pairing Code: ' + data.code + '\\n\\nතත්පර 30ක් ඇතුළත WhatsApp එකෙහි Link with phone number වෙත දමන්න!');
             } else {
               alert(data.error || 'Connection failed. Please wait a moment and retry.');
             }
@@ -310,7 +309,7 @@ function renderPortalHtml() {
               const res = await fetch('/reset-num?num=' + phone);
               const data = await res.json();
               if (data.success) {
-                alert('✅ Session Cleared! දැන් අලුතින් Code ලබාගන්න.');
+                alert('✅ Session Cleared! දැන් අලුතින් Code එකක් ලබාගන්න.');
               }
             } catch(e) {
               alert('Clean request failed!');
@@ -332,65 +331,8 @@ function renderPortalHtml() {
 }
 
 // ============================================================================
-// 🔌 SOCKET CREATION (Stable Handshake)
+// 🔌 MESSAGE LISTENER
 // ============================================================================
-
-async function createBaileysSocket(phoneNumber) {
-  const { state, saveCreds, clearSessionData } = await useMongoDBAuthState(phoneNumber);
-  const logger = pino({ level: 'silent' });
-  const msgRetryCounterCache = new NodeCache({ stdTTL: 180, checkperiod: 60, maxKeys: 300 });
-  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
-
-  const sock = makeWASocket({
-    version,
-    auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-    logger,
-    printQRInTerminal: false,
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    msgRetryCounterCache,
-    syncFullHistory: false,
-    generateHighQualityLinkPreview: false,
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 0,
-    keepAliveIntervalMs: 15000,
-    markOnlineOnConnect: true,
-    emitOwnEvents: false,
-    shouldIgnoreJid: () => false
-  });
-
-  sock.ev.on('creds.update', saveCreds);
-  return { sock, clearSessionData };
-}
-
-// ============================================================================
-// 🔄 CONNECTION & COMMAND HANDLING
-// ============================================================================
-
-async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSessionData) {
-  const statusCode = lastDisconnect?.error?.output?.statusCode;
-  console.log(`⚠️ Connection closed (${phoneNumber}), Code: ${statusCode}`);
-
-  try {
-    sock.ev.removeAllListeners();
-    sock.ws?.close();
-  } catch (e) {}
-
-  delete activeSessions[phoneNumber];
-
-  if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-    console.log(`❌ Logged out permanently: ${phoneNumber}`);
-    delete reconnectAttempts[phoneNumber];
-    if (typeof clearSessionData === 'function') await clearSessionData();
-    return;
-  }
-
-  reconnectAttempts[phoneNumber] = (reconnectAttempts[phoneNumber] || 0) + 1;
-  const delayTime = statusCode === 440 ? 15000 : 5000;
-
-  setTimeout(() => {
-    initWhatsApp(phoneNumber);
-  }, delayTime);
-}
 
 function registerMessageListener(sock) {
   sock.ev.on('messages.upsert', async ({ messages }) => {
@@ -438,46 +380,88 @@ function registerMessageListener(sock) {
   });
 }
 
-async function initWhatsApp(phoneNumber) {
-  if (activeSessions[phoneNumber]) return activeSessions[phoneNumber];
-  if (isStarting[phoneNumber]) return;
-  isStarting[phoneNumber] = true;
-
-  try {
-    const { sock, clearSessionData } = await createBaileysSocket(phoneNumber);
-    activeSessions[phoneNumber] = sock;
-    delete isStarting[phoneNumber];
-
-    sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update;
-      if (connection === 'close') {
-        await handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSessionData);
-      } else if (connection === 'open') {
-        console.log(`✅ BOT CONNECTED: ${phoneNumber}`);
-        reconnectAttempts[phoneNumber] = 0;
-      }
-    });
-
-    registerMessageListener(sock);
-    return sock;
-  } catch (err) {
-    delete isStarting[phoneNumber];
-    console.error(`initWhatsApp Error (${phoneNumber}):`, err.message);
-  }
-}
-
 // ============================================================================
-// 🌐 HTTP SERVER & PAIRING ENGINE
+// 🚀 SESSION INITIALIZER / RUNNER
 // ============================================================================
 
 function stopAndRemoveSession(num) {
-  if (!activeSessions[num]) return;
-  try {
-    activeSessions[num].ev.removeAllListeners();
-    activeSessions[num].ws?.close();
-  } catch (e) {}
-  delete activeSessions[num];
+  if (activeSessions[num]) {
+    try {
+      activeSessions[num].ev.removeAllListeners();
+      activeSessions[num].ws?.close();
+    } catch (e) {}
+    delete activeSessions[num];
+  }
 }
+
+async function startWhatsAppSession(phoneNumber, forPairing = false) {
+  if (activeSessions[phoneNumber] && !forPairing) return activeSessions[phoneNumber];
+
+  stopAndRemoveSession(phoneNumber);
+
+  const { state, saveCreds, clearSessionData } = await useMongoDBAuthState(phoneNumber);
+  const logger = pino({ level: 'silent' });
+  const msgRetryCounterCache = new NodeCache({ stdTTL: 180, checkperiod: 60, maxKeys: 300 });
+  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
+
+  const sock = makeWASocket({
+    version,
+    auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
+    logger,
+    printQRInTerminal: false,
+    // Google Chrome profile to avoid Linked Device drop
+    browser: ['Chrome (Linux)', 'Chrome', '114.0.5735.198'],
+    msgRetryCounterCache,
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 0,
+    keepAliveIntervalMs: 15000,
+    markOnlineOnConnect: true,
+    emitOwnEvents: false,
+    shouldIgnoreJid: () => false
+  });
+
+  activeSessions[phoneNumber] = sock;
+
+  // Creds save immediately on update
+  sock.ev.on('creds.update', async () => {
+    await saveCreds();
+  });
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+
+    if (connection === 'open') {
+      console.log(`✅ [${phoneNumber}] WhatsApp Connected & Linked Successfully!`);
+      reconnectAttempts[phoneNumber] = 0;
+      registerMessageListener(sock);
+    } else if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log(`⚠️ Connection closed (${phoneNumber}), Code: ${statusCode}`);
+
+      delete activeSessions[phoneNumber];
+
+      if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
+        console.log(`❌ Logged out: ${phoneNumber}`);
+        if (typeof clearSessionData === 'function') await clearSessionData();
+        return;
+      }
+
+      // Reconnect if not permanently logged out
+      reconnectAttempts[phoneNumber] = (reconnectAttempts[phoneNumber] || 0) + 1;
+      setTimeout(() => {
+        startWhatsAppSession(phoneNumber, false);
+      }, 5000);
+    }
+  });
+
+  return sock;
+}
+
+// ============================================================================
+// 🌐 HTTP SERVER & REAL-TIME PAIRING
+// ============================================================================
 
 async function startServer() {
   const app = express();
@@ -505,65 +489,29 @@ async function startServer() {
     if (!num) return res.status(400).json({ error: 'Number required' });
     num = num.replace(/[^0-9]/g, '');
 
-    stopAndRemoveSession(num);
     try {
+      // 1. පැරණි broken session සම්පූර්ණයෙන්ම clear කිරීම
+      stopAndRemoveSession(num);
       await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
-    } catch (e) {}
 
-    let pairSock = null;
+      // 2. Persistent WhatsApp session එකක් start කිරීම
+      const sock = await startWhatsAppSession(num, true);
 
-    try {
-      const { state, saveCreds } = await useMongoDBAuthState(num);
-      const logger = pino({ level: 'silent' });
-      const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
-
-      pairSock = makeWASocket({
-        version,
-        auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-        logger,
-        printQRInTerminal: false,
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 15000,
-        markOnlineOnConnect: true,
-        emitOwnEvents: false
-      });
-
-      pairSock.ev.on('creds.update', async () => {
-        await saveCreds();
-      });
-
-      pairSock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'open') {
-          console.log(`✅ Session Successfully Linked: ${num}`);
-          activeSessions[num] = pairSock;
-          registerMessageListener(pairSock);
-        } else if (connection === 'close') {
-          const code = lastDisconnect?.error?.output?.statusCode;
-          if (code !== DisconnectReason.loggedOut && code !== 401) {
-            setTimeout(() => initWhatsApp(num), 3000);
-          }
-        }
-      });
-
+      // WebSocket Connection delay (Handshake එක establish වෙනකම් delay කිරීම)
       await delay(3500);
 
-      if (!pairSock.authState.creds.registered) {
-        let code = await pairSock.requestPairingCode(num);
+      if (!sock.authState.creds.registered) {
+        let code = await sock.requestPairingCode(num);
         code = code?.match(/.{1,4}/g)?.join('-') || code;
+        console.log(`🔑 Pairing Code generated for ${num}: ${code}`);
         return res.json({ code });
       } else {
-        await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
         return res.status(400).json({ error: 'Session already active. Clean session and retry!' });
       }
     } catch (err) {
-      console.error('Pair Route Error:', err);
-      if (pairSock) {
-        try { pairSock.ws?.close(); } catch (e) {}
-      }
-      return res.status(500).json({ error: 'Service rate-limited. Please wait 15 seconds.' });
+      console.error('Pairing Error:', err);
+      stopAndRemoveSession(num);
+      return res.status(500).json({ error: 'Server busy. Please wait 15 seconds and retry!' });
     }
   });
 
@@ -571,16 +519,16 @@ async function startServer() {
     console.log(`🚀 [${BOT_NAME}] Server running on port ${port}`);
   });
 
-  // Reconnect saved sessions from database
+  // Database එකේ save වෙලා තියෙන sessions reconnect කිරීම
   try {
     const sessions = await Auth.find({ _id: /-creds$/ }).lean();
     for (const session of sessions) {
       const pNumber = session._id.split('-creds')[0];
-      await initWhatsApp(pNumber);
-      await delay(6000);
+      await startWhatsAppSession(pNumber, false);
+      await delay(5000);
     }
   } catch (e) {
-    console.error('Error reconnecting sessions:', e.message);
+    console.error('Reconnect error:', e.message);
   }
 }
 
