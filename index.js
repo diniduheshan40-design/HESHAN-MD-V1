@@ -13,8 +13,7 @@ const {
   DisconnectReason,
   delay,
   makeCacheableSignalKeyStore,
-  fetchLatestBaileysVersion,
-  Browsers
+  fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 
 // 🟢 Crash Guards
@@ -37,7 +36,7 @@ const reconnectAttempts = {};
 const commands = new Map();
 
 // ============================================================================
-// 📂 COMMAND LOADER (for Ping and basic commands)
+// 📂 COMMAND LOADER (Ping සහ අනෙකුත් commands සඳහා)
 // ============================================================================
 
 function loadAllCommands() {
@@ -69,7 +68,7 @@ function getCommandExecutor(cmd) {
 }
 
 // ============================================================================
-// 🌐 UI PORTAL (CLEAN & MODERN RED THEME)
+// 🌐 UI PORTAL
 // ============================================================================
 
 function renderPortalHtml() {
@@ -292,7 +291,7 @@ function renderPortalHtml() {
               display.innerText = data.code;
               wrapper.style.display = 'block';
               navigator.clipboard.writeText(data.code).catch(()=>{});
-              alert('✅ Pairing Code: ' + data.code + '\\n\\nWhatsApp හි Link with phone number වෙත ඇතුළත් කරන්න!');
+              alert('✅ Pairing Code: ' + data.code + '\\n\\nතත්පර 20ක් ඇතුළත WhatsApp හි Link with phone number වෙත දමන්න!');
             } else {
               alert(data.error || 'Connection failed. Please wait a moment and retry.');
             }
@@ -333,7 +332,7 @@ function renderPortalHtml() {
 }
 
 // ============================================================================
-// 🔌 SOCKET CREATION (Fix for Linked Device & Handshake)
+// 🔌 SOCKET CREATION (Stable Handshake)
 // ============================================================================
 
 async function createBaileysSocket(phoneNumber) {
@@ -347,14 +346,13 @@ async function createBaileysSocket(phoneNumber) {
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
     logger,
     printQRInTerminal: false,
-    // Official Chrome Browser signature to avoid Linked Device Desync/Errors
-    browser: Browsers.macOS('Desktop'),
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
     msgRetryCounterCache,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 0,
-    keepAliveIntervalMs: 25000,
+    keepAliveIntervalMs: 15000,
     markOnlineOnConnect: true,
     emitOwnEvents: false,
     shouldIgnoreJid: () => false
@@ -395,7 +393,7 @@ async function handleConnectionClose(sock, phoneNumber, lastDisconnect, clearSes
 }
 
 function registerMessageListener(sock) {
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+  sock.ev.on('messages.upsert', async ({ messages }) => {
     if (!messages || !messages.length) return;
     const msg = messages[0];
     if (!msg.message || msg.key?.remoteJid?.endsWith('@newsletter')) return;
@@ -412,7 +410,6 @@ function registerMessageListener(sock) {
 
     if (!text) return;
 
-    // Command Parser
     const prefixMatch = text.match(/^[./!#]/);
     if (!prefixMatch) return;
 
@@ -470,7 +467,7 @@ async function initWhatsApp(phoneNumber) {
 }
 
 // ============================================================================
-// 🌐 HTTP SERVER & PAIRING
+// 🌐 HTTP SERVER & PAIRING ENGINE
 // ============================================================================
 
 function stopAndRemoveSession(num) {
@@ -516,7 +513,7 @@ async function startServer() {
     let pairSock = null;
 
     try {
-      const { state, saveCreds, clearSessionData } = await useMongoDBAuthState(num);
+      const { state, saveCreds } = await useMongoDBAuthState(num);
       const logger = pino({ level: 'silent' });
       const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
 
@@ -525,32 +522,33 @@ async function startServer() {
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         logger,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Desktop'),
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 25000,
+        keepAliveIntervalMs: 15000,
         markOnlineOnConnect: true,
         emitOwnEvents: false
       });
 
-      pairSock.ev.on('creds.update', saveCreds);
+      pairSock.ev.on('creds.update', async () => {
+        await saveCreds();
+      });
 
       pairSock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
+          console.log(`✅ Session Successfully Linked: ${num}`);
           activeSessions[num] = pairSock;
           registerMessageListener(pairSock);
-          console.log(`✅ Session Linked: ${num}`);
         } else if (connection === 'close') {
           const code = lastDisconnect?.error?.output?.statusCode;
           if (code !== DisconnectReason.loggedOut && code !== 401) {
-            setTimeout(() => initWhatsApp(num), 5000);
+            setTimeout(() => initWhatsApp(num), 3000);
           }
         }
       });
 
-      // WebSocket Handshake එකට ප්‍රමාණවත් කාලයක් ලබා දීම (Linked Device Error වලක්වයි)
-      await delay(4000);
+      await delay(3500);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -558,14 +556,14 @@ async function startServer() {
         return res.json({ code });
       } else {
         await Auth.deleteMany({ _id: new RegExp('^' + num, 'i') });
-        return res.status(400).json({ error: 'Session cleared! Retry now.' });
+        return res.status(400).json({ error: 'Session already active. Clean session and retry!' });
       }
     } catch (err) {
       console.error('Pair Route Error:', err);
       if (pairSock) {
         try { pairSock.ws?.close(); } catch (e) {}
       }
-      return res.status(500).json({ error: 'Rate limited. Please wait 15 seconds.' });
+      return res.status(500).json({ error: 'Service rate-limited. Please wait 15 seconds.' });
     }
   });
 
@@ -573,7 +571,7 @@ async function startServer() {
     console.log(`🚀 [${BOT_NAME}] Server running on port ${port}`);
   });
 
-  // Reconnect saved sessions
+  // Reconnect saved sessions from database
   try {
     const sessions = await Auth.find({ _id: /-creds$/ }).lean();
     for (const session of sessions) {
