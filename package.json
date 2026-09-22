@@ -1,7 +1,6 @@
 {
   "name": "heshan-md-pairing",
   "version": "1.0.0",
-  "description": "WhatsApp Multi-Device Pairing Portal & Bot Engine",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -11,7 +10,6 @@
     "express": "^4.19.2",
     "mongoose": "^8.3.1",
     "node-cache": "^5.1.2",
-    "node-fetch": "^2.7.0",
     "pino": "^8.20.0"
   },
   "engines": {
