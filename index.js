@@ -398,15 +398,15 @@ async function createBaileysSocket(phoneNumber) {
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
     logger,
     printQRInTerminal: false,
-    browser: Browsers.ubuntu('Chrome'),
+    browser: Browsers.macOS('Desktop'),
     msgRetryCounterCache,
     syncFullHistory: false,
     shouldSyncHistoryMessage: () => false,
     fireInitQueries: true,
     generateHighQualityLinkPreview: false,
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 25000,
+    connectTimeoutMs: 90000,
+    defaultQueryTimeoutMs: 90000,
+    keepAliveIntervalMs: 30000,
     markOnlineOnConnect: true,
     emitOwnEvents: false,
     shouldIgnoreJid: () => false
@@ -1116,10 +1116,10 @@ function registerPairRoute(app) {
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         logger,
         printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome'),
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 25000,
+        browser: Browsers.macOS('Desktop'),
+        connectTimeoutMs: 90000,
+        defaultQueryTimeoutMs: 90000,
+        keepAliveIntervalMs: 30000,
         markOnlineOnConnect: false,
         emitOwnEvents: false
       });
@@ -1143,7 +1143,8 @@ function registerPairRoute(app) {
         }
       });
 
-      await delay(3000);
+      // Handshake එක settle වීමට තත්පර 6ක් රැඳී සිටීම
+      await delay(6000);
 
       if (!pairSock.authState.creds.registered) {
         let code = await pairSock.requestPairingCode(num);
@@ -1162,7 +1163,7 @@ function registerPairRoute(app) {
         } catch (e) {}
       }
       return res.status(500).json({ 
-        error: 'Pairing code generation failed. WhatsApp server rate-limit or network delay. Wait 15 seconds and retry.' 
+        error: 'Pairing error: ' + (err?.message || 'Rate-limited. Wait 15 seconds and retry.') 
       });
     }
   });
