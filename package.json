@@ -1,7 +1,7 @@
 {
-  "name": "dark-dinu-md",
+  "name": "heshan-md",
   "version": "2.0.0",
-  "description": "DARK DINU Cyber Security WhatsApp Multi-Device Core Engine",
+  "description": "WhatsApp Multi-Device Bot",
   "main": "index.js",
   "scripts": {
     "start": "node --max-old-space-size=450 index.js"
