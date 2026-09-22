@@ -5,15 +5,15 @@ const { proto, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 const AuthSchema = new mongoose.Schema(
   {
     _id: { type: String, required: true },
-    value: { type: String, required: true }
+    value: { type: mongoose.Schema.Types.Mixed, required: true }
   },
-  { versionKey: false }
+  { versionKey: false, timestamps: true }
 );
 
 const Auth = mongoose.models.Auth || mongoose.model('Auth', AuthSchema);
 
 /**
- * Custom MongoDB Auth State for Baileys
+ * High-Performance Bulk MongoDB Auth State for Baileys
  * @param {string} sessionId - Phone number or unique session ID
  */
 async function useMongoDBAuthState(sessionId) {
@@ -22,8 +22,8 @@ async function useMongoDBAuthState(sessionId) {
   const writeData = async (data, id) => {
     try {
       const key = `${cleanId}-${id}`;
-      const value = JSON.stringify(data, BufferJSON.replacer);
-      await Auth.findByIdAndUpdate(key, { value }, { upsert: true });
+      const value = JSON.parse(JSON.stringify(data, BufferJSON.replacer));
+      await Auth.findByIdAndUpdate(key, { value }, { upsert: true, setDefaultsOnInsert: true });
     } catch (e) {
       console.error(`Auth Write Error (${id}):`, e.message);
     }
@@ -34,7 +34,7 @@ async function useMongoDBAuthState(sessionId) {
       const key = `${cleanId}-${id}`;
       const doc = await Auth.findById(key).lean();
       if (!doc || !doc.value) return null;
-      return JSON.parse(doc.value, BufferJSON.reviver);
+      return JSON.parse(JSON.stringify(doc.value), BufferJSON.reviver);
     } catch (e) {
       return null;
     }
@@ -58,27 +58,70 @@ async function useMongoDBAuthState(sessionId) {
       keys: {
         get: async (type, ids) => {
           const data = {};
-          await Promise.all(
-            ids.map(async (id) => {
-              let value = await readData(`${type}-${id}`);
-              if (type === 'app-state-sync-key' && value) {
-                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+          const keysToFetch = ids.map((id) => `${cleanId}-${type}-${id}`);
+          
+          try {
+            // Bulk read - Single database roundtrip for all keys
+            const docs = await Auth.find({ _id: { $in: keysToFetch } }).lean();
+            const docsMap = new Map();
+            for (const doc of docs) {
+              docsMap.set(doc._id, doc.value);
+            }
+
+            for (const id of ids) {
+              const fullKey = `${cleanId}-${type}-${id}`;
+              const rawVal = docsMap.get(fullKey);
+              if (rawVal) {
+                let value = JSON.parse(JSON.stringify(rawVal), BufferJSON.reviver);
+                if (type === 'app-state-sync-key' && value) {
+                  value = proto.Message.AppStateSyncKeyData.fromObject(value);
+                }
+                data[id] = value;
+              } else {
+                data[id] = null;
               }
-              data[id] = value;
-            })
-          );
+            }
+          } catch (err) {
+            console.error(`Auth Bulk Get Error (${type}):`, err.message);
+          }
+
           return data;
         },
         set: async (data) => {
-          const tasks = [];
+          const bulkOps = [];
+
           for (const category in data) {
             for (const id in data[category]) {
               const value = data[category][id];
-              const key = `${category}-${id}`;
-              tasks.push(value ? writeData(value, key) : removeData(key));
+              const key = `${cleanId}-${category}-${id}`;
+
+              if (value) {
+                const serialized = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
+                bulkOps.push({
+                  updateOne: {
+                    filter: { _id: key },
+                    update: { $set: { value: serialized } },
+                    upsert: true
+                  }
+                });
+              } else {
+                bulkOps.push({
+                  deleteOne: {
+                    filter: { _id: key }
+                  }
+                });
+              }
             }
           }
-          await Promise.all(tasks);
+
+          // Single BulkWrite query for instant write execution (Zero latency drop)
+          if (bulkOps.length > 0) {
+            try {
+              await Auth.bulkWrite(bulkOps, { ordered: false });
+            } catch (err) {
+              console.error('Auth BulkWrite Error:', err.message);
+            }
+          }
         }
       }
     },
@@ -97,4 +140,3 @@ module.exports = {
   Auth,
   useMongoDBAuthState
 };
-
