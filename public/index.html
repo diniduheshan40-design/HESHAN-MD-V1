@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DARK DINU | TERMINAL LINK</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    body {
+      background-color: #050505;
+      color: #00ff66;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .terminal-card {
+      width: 100%;
+      max-width: 460px;
+      background: rgba(10, 15, 12, 0.95);
+      border: 1px solid #00ff66;
+      border-radius: 8px;
+      padding: 30px 25px;
+      box-shadow: 0 0 25px rgba(0, 255, 102, 0.2);
+    }
+    h1 {
+      font-size: 1.5rem;
+      text-align: center;
+      margin-bottom: 8px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      text-shadow: 0 0 8px #00ff66;
+    }
+    p.subtitle {
+      font-size: 0.8rem;
+      text-align: center;
+      color: #88ffaa;
+      margin-bottom: 25px;
+    }
+    .input-box {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+    input {
+      width: 100%;
+      background: #000;
+      border: 1px solid #00aa44;
+      border-radius: 4px;
+      padding: 12px 14px;
+      color: #fff;
+      font-size: 1rem;
+      outline: none;
+      transition: border 0.3s;
+    }
+    input:focus {
+      border-color: #00ff66;
+      box-shadow: 0 0 10px rgba(0, 255, 102, 0.4);
+    }
+    button {
+      width: 100%;
+      background: #00ff66;
+      color: #000;
+      border: none;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    button:hover {
+      background: #33ff88;
+      box-shadow: 0 0 15px rgba(0, 255, 102, 0.6);
+    }
+    .output-area {
+      margin-top: 25px;
+      padding: 15px;
+      background: #000;
+      border: 1px dashed #00aa44;
+      border-radius: 4px;
+      text-align: center;
+      display: none;
+    }
+    .code-display {
+      font-size: 1.8rem;
+      letter-spacing: 4px;
+      color: #fff;
+      margin-top: 10px;
+      user-select: all;
+    }
+  </style>
+</head>
+<body>
+  <div class="terminal-card">
+    <h1>DARK DINU MD</h1>
+    <p class="subtitle">> WA_DEVICE_PAIRING_PORTAL_v2.0</p>
+
+    <div class="input-box">
+      <label for="phone">Enter WhatsApp Number (with country code):</label>
+      <input type="text" id="phone" placeholder="947xxxxxxxx" />
+    </div>
+
+    <button id="get-code-btn" onclick="fetchPairCode()">Request Pair Code</button>
+
+    <div class="output-area" id="output">
+      <div id="status-text">> Processing...</div>
+      <div class="code-display" id="code-result"></div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchPairCode() {
+      const phoneInput = document.getElementById('phone').value.replace(/[^0-9]/g, '');
+      const output = document.getElementById('output');
+      const statusText = document.getElementById('status-text');
+      const codeResult = document.getElementById('code-result');
+      const btn = document.getElementById('get-code-btn');
+
+      if (!phoneInput) {
+        alert("Please enter a valid phone number!");
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerText = "CONNECTING...";
+      output.style.display = "block";
+      statusText.innerText = "> Requesting code from Baileys socket...";
+      codeResult.innerText = "";
+
+      try {
+        const res = await fetch(`/pair?number=${phoneInput}`);
+        const data = await res.json();
+
+        if (data.code) {
+          statusText.innerText = "> CODE GENERATED. CLICK TO COPY:";
+          codeResult.innerText = data.code;
+        } else {
+          statusText.innerText = "> ERROR: " + (data.error || "Failed to fetch code");
+        }
+      } catch (err) {
+        statusText.innerText = "> FAILED TO CONNECT TO SERVER";
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Request Pair Code";
+      }
+    }
+  </script>
+</body>
+</html>
+
