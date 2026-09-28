@@ -322,7 +322,7 @@ function setupMessageHandler(sock) {
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
-  const logger = pino({ level: 'silent' });
+  const logger = pino({ level: 'fatal' });
 
   botSocket = makeWASocket({
     version,
@@ -332,7 +332,7 @@ async function startBot() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.macOS('Chrome'),
+    browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60000,
     keepAliveIntervalMs: 10000
   });
@@ -362,7 +362,7 @@ async function startBot() {
 async function init() {
   try {
     await mongoose.connect(MONGO_URI);
-    console.log('✅ [DARK DINU] Connected to MongoDB (Cluster: HESHAN-MD)!');
+    console.log('✅ [DARK DINU] Connected to MongoDB!');
 
     const restored = await restoreCredentials();
     if (restored && fs.existsSync(path.join(sessionDir, 'creds.json'))) {
