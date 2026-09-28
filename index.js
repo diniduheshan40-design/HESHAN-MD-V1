@@ -9,7 +9,6 @@ const {
   fetchLatestBaileysVersion, 
   useMultiFileAuthState, 
   makeCacheableSignalKeyStore,
-  Browsers,
   DisconnectReason 
 } = require('@whiskeysockets/baileys');
 
@@ -30,7 +29,7 @@ app.use(express.urlencoded({ extended: true }));
 let botSocket = null;
 
 // ==========================================
-// 1. Official Dark Cyber Terminal UI
+// 1. Web Terminal UI
 // ==========================================
 app.get('/', (req, res) => {
   res.send(`
@@ -38,7 +37,7 @@ app.get('/', (req, res) => {
     <html lang="en">
     <head>
       <meta charset="UTF-8">
-      <title>⚡ DARK DINU // MAINFRAME PAIR ENGINE</title>
+      <title>⚡ DARK DINU // PAIR ENGINE</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
       <style>
@@ -51,18 +50,8 @@ app.get('/', (req, res) => {
           display: flex;
           align-items: center;
           justify-content: center;
-          overflow-x: hidden;
         }
-        body::before {
-          content: " ";
-          position: fixed;
-          inset: 0;
-          background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.4) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 170, 0.02), rgba(0, 0, 255, 0.04));
-          z-index: 10;
-          background-size: 100% 3px, 6px 100%;
-          pointer-events: none;
-        }
-        .terminal-container { width: 92%; max-width: 480px; position: relative; z-index: 20; }
+        .terminal-container { width: 92%; max-width: 480px; }
         .terminal-box {
           background: rgba(8, 10, 14, 0.95);
           border: 1px solid #ff0044;
@@ -80,7 +69,7 @@ app.get('/', (req, res) => {
         }
         .dots { display: flex; gap: 6px; }
         .dot { width: 10px; height: 10px; border-radius: 50%; }
-        .dot-red { background: #ff0044; box-shadow: 0 0 8px #ff0044; }
+        .dot-red { background: #ff0044; }
         .dot-yellow { background: #ffaa00; }
         .dot-green { background: #00ffaa; }
         .terminal-title {
@@ -95,7 +84,7 @@ app.get('/', (req, res) => {
           font-size: 26px;
           letter-spacing: 3px;
           color: #ffffff;
-          text-shadow: 0 0 10px #ff0044, 0 0 20px #ff0044;
+          text-shadow: 0 0 10px #ff0044;
           margin-bottom: 4px;
         }
         p.subtitle { font-size: 11px; letter-spacing: 2px; color: #6a7485; margin-bottom: 20px; }
@@ -119,7 +108,6 @@ app.get('/', (req, res) => {
           border-radius: 4px;
           outline: none;
         }
-        input:focus { border-color: #ff0044; box-shadow: 0 0 15px rgba(255, 0, 68, 0.4); }
         button {
           width: 100%;
           padding: 14px;
@@ -132,10 +120,7 @@ app.get('/', (req, res) => {
           letter-spacing: 2px;
           border-radius: 4px;
           cursor: pointer;
-          box-shadow: 0 0 20px rgba(255, 0, 68, 0.4);
-          transition: 0.3s;
         }
-        button:hover { background: #d60039; }
         button:disabled { background: #252833; color: #616675; cursor: not-allowed; }
         .result-terminal {
           display: none;
@@ -168,7 +153,6 @@ app.get('/', (req, res) => {
               <div class="dot dot-green"></div>
             </div>
             <div class="terminal-title">DARK DINU // V2.0.0</div>
-            <div style="font-size: 10px; color: #555;">PORT 3000</div>
           </div>
           <div class="terminal-body">
             <h1>⚡ DARK DINU ⚡</h1>
@@ -292,14 +276,6 @@ function setupMessageHandler(sock) {
       msg.message.imageMessage?.caption || ''
     ).trim();
 
-    const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
-    if (quotedMsgId && ['1', '2', '3'].includes(textMsg)) {
-      const songCmd = commands.get('song');
-      if (songCmd) {
-        return await songCmd.execute(sock, msg, [textMsg], chatJid);
-      }
-    }
-
     const prefix = '.';
     if (!textMsg.startsWith(prefix)) return;
 
@@ -332,9 +308,9 @@ async function startBot() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.ubuntu('Chrome'),
-    connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 10000
+    browser: ['Chrome (Linux)', 'Chrome', '124.0.0.0'],
+    connectTimeoutMs: 120000,
+    keepAliveIntervalMs: 25000
   });
 
   botSocket.ev.on('creds.update', async () => {
