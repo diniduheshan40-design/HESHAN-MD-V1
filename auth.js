@@ -7,21 +7,18 @@ const {
   useMultiFileAuthState, 
   fetchLatestBaileysVersion, 
   makeCacheableSignalKeyStore,
-  Browsers,
   DisconnectReason 
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Session Storage Schema
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   creds: { type: String, required: true }
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// MongoDB එකෙන් Credentials Restore කිරීම
 async function restoreCredentials() {
   try {
     const record = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
@@ -40,7 +37,6 @@ async function restoreCredentials() {
   }
 }
 
-// Session එක MongoDB එකට Base64 String එකක් ලෙස Backup කිරීම
 async function backupCredentials() {
   try {
     const credsPath = path.join(sessionDir, 'creds.json');
@@ -85,11 +81,13 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.windows('Desktop'),
+    // Standard Linux Chrome User-Agent (WhatsApp rejects non-standard desktop agents)
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
     syncFullHistory: false,
     generateHighQualityLinkPreview: true,
     connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 10000
+    keepAliveIntervalMs: 15000,
+    markOnlineOnConnect: false
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -113,7 +111,9 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
   });
 
   let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-  await delay(3000);
+
+  // Socket එක WhatsApp WebSocket stream එක register කරගන්න තත්පර 4ක් ඉඩ දෙන්න
+  await delay(4000);
   const code = await activeSocket.requestPairingCode(cleanNumber);
   return code;
 }
