@@ -9,7 +9,8 @@ const {
   fetchLatestBaileysVersion, 
   useMultiFileAuthState, 
   makeCacheableSignalKeyStore,
-  DisconnectReason 
+  DisconnectReason,
+  Browsers 
 } = require('@whiskeysockets/baileys');
 
 const { 
@@ -21,7 +22,7 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://diniduheshan40_db_user:Heshan2007@cluster0.5gazebm.mongodb.net/HESHAN-MD?retryWrites=true&w=majority&appName=Cluster0";
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://diniduheshan2007_db_user:SZD7sfcIU6Einajx@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -308,9 +309,9 @@ async function startBot() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: ['Chrome (Linux)', 'Chrome', '124.0.0.0'],
-    connectTimeoutMs: 120000,
-    keepAliveIntervalMs: 25000
+    browser: Browsers.macOS('Desktop'),
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 15000
   });
 
   botSocket.ev.on('creds.update', async () => {
