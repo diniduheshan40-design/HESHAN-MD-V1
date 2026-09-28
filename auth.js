@@ -7,13 +7,14 @@ const {
   useMultiFileAuthState, 
   fetchLatestBaileysVersion, 
   makeCacheableSignalKeyStore,
-  DisconnectReason 
+  DisconnectReason,
+  Browsers 
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Session Storage
+// MongoDB Session Storage Schema
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   files: { type: Map, of: String }
@@ -31,7 +32,8 @@ async function restoreCredentials() {
     }
 
     for (let [fileName, content] of doc.files.entries()) {
-      fs.writeFileSync(path.join(sessionDir, fileName), content, 'utf-8');
+      const realFileName = fileName.replace(/__dot__/g, '.');
+      fs.writeFileSync(path.join(sessionDir, realFileName), content, 'utf-8');
     }
     return true;
   } catch (e) {
@@ -40,7 +42,7 @@ async function restoreCredentials() {
   }
 }
 
-// Backup session to MongoDB
+// Backup session to MongoDB (Fixed: Dots sanitized)
 async function backupCredentials() {
   try {
     if (!fs.existsSync(sessionDir)) return;
@@ -50,7 +52,8 @@ async function backupCredentials() {
     for (let file of fileList) {
       const filePath = path.join(sessionDir, file);
       if (fs.statSync(filePath).isFile()) {
-        filesMap.set(file, fs.readFileSync(filePath, 'utf-8'));
+        const safeFileName = file.replace(/\./g, '__dot__');
+        filesMap.set(safeFileName, fs.readFileSync(filePath, 'utf-8'));
       }
     }
 
@@ -68,7 +71,6 @@ async function backupCredentials() {
 let activeSocket = null;
 
 async function requestPairCode(phoneNumber, onLoginSuccess) {
-  // Clean prior sockets
   if (activeSocket) {
     try { 
       activeSocket.end(); 
@@ -76,7 +78,6 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
     activeSocket = null;
   }
 
-  // Clear existing session directory
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -94,15 +95,13 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Real Chrome Desktop Signature (Render IP bypass)
-    browser: ['Chrome (Linux)', 'Chrome', '124.0.0.0'],
+    // Desktop signature bypass for cloud hosts
+    browser: Browsers.macOS('Desktop'),
     syncFullHistory: false,
     markOnlineOnConnect: false,
-    generateHighQualityLinkPreview: false,
-    connectTimeoutMs: 120000,
-    defaultQueryTimeoutMs: 0,
-    keepAliveIntervalMs: 25000,
-    retryRequestDelayMs: 2000
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 15000,
+    defaultQueryTimeoutMs: 0
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -128,8 +127,6 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
   });
 
   const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-
-  // Render network latency delay
   await delay(2000);
 
   if (!activeSocket.authState.creds.registered) {
