@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { default: makeWASocket, delay, fetchLatestBaileysVersion, Browsers, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, delay, fetchLatestBaileysVersion, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 const SessionSchema = new mongoose.Schema({
@@ -67,24 +67,36 @@ async function useMongoAuthState(sessionId = 'dark_dinu_session') {
 }
 
 async function getPairingCode(phoneNumber, onPairCode) {
-  const { state, saveCreds } = await useMongoAuthState();
-  const { version } = await fetchLatestBaileysVersion();
+  // කලින් අසාර්ථක වූ session එකක් ඇත්නම් clear කරමු
+  await SessionModel.deleteOne({ sessionId: 'dark_dinu_session' }).catch(() => {});
+
+  const { state, saveCreds } = await useMongoAuthState('dark_dinu_session');
+  const { version, isLatest } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
     version,
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     auth: state,
-    browser: Browsers.macOS('Desktop')
+    // නව WhatsApp update වලට ගැලපෙන standard browser signature එක
+    browser: ['Ubuntu', 'Chrome', '20.0.04']
   });
 
   sock.ev.on('creds.update', saveCreds);
 
   if (!sock.authState.creds.registered) {
     let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-    await delay(3000);
-    const code = await sock.requestPairingCode(cleanNumber);
-    if (onPairCode) onPairCode(code);
+    
+    // Pairing code එක ඉල්ලීමට පෙර තත්පර 4ක් delay කිරීම (Block වීම වළක්වයි)
+    await delay(4000);
+    
+    try {
+      const code = await sock.requestPairingCode(cleanNumber);
+      if (onPairCode) onPairCode(code);
+    } catch (err) {
+      console.error('Pairing Code Request Error:', err);
+      throw err;
+    }
   }
 
   return sock;
