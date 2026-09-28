@@ -14,11 +14,10 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const { 
-  createPairingSocket, 
-  restoreSessionFromMongo, 
-  backupSessionToMongo, 
-  sessionPath,
-  getActiveSocket 
+  requestPairCode, 
+  restoreCredentials, 
+  backupCredentials, 
+  sessionDir 
 } = require('./auth');
 
 const app = express();
@@ -31,7 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 let botSocket = null;
 
 // ==========================================
-// 1. Official Dark Cyber Terminal Dashboard
+// 1. Official Hacker Pairing Console (UI)
 // ==========================================
 app.get('/', (req, res) => {
   res.send(`
@@ -39,9 +38,9 @@ app.get('/', (req, res) => {
     <html lang="en">
     <head>
       <meta charset="UTF-8">
-      <title>⚡ DARK DINU // MAINFRAME PAIR ENGINE</title>
+      <title>☠️ DARK DINU // MAINFRAME</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+      <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&family=Orbitron:wght@800;900&display=swap" rel="stylesheet">
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -52,7 +51,7 @@ app.get('/', (req, res) => {
           display: flex;
           align-items: center;
           justify-content: center;
-          overflow-x: hidden;
+          position: relative;
         }
         body::before {
           content: " ";
@@ -63,60 +62,34 @@ app.get('/', (req, res) => {
           background-size: 100% 3px, 6px 100%;
           pointer-events: none;
         }
-        .terminal-container { width: 92%; max-width: 480px; position: relative; z-index: 20; }
-        .terminal-box {
-          background: rgba(8, 10, 14, 0.95);
+        .container { width: 92%; max-width: 460px; position: relative; z-index: 20; }
+        .box {
+          background: rgba(10, 12, 16, 0.96);
           border: 1px solid #ff0044;
-          box-shadow: 0 0 35px rgba(255, 0, 68, 0.3);
-          border-radius: 6px;
-          overflow: hidden;
+          box-shadow: 0 0 35px rgba(255, 0, 68, 0.35);
+          border-radius: 8px;
+          padding: 30px 24px;
+          text-align: center;
         }
-        .terminal-bar {
-          background: #11141b;
-          padding: 10px 14px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          border-bottom: 1px solid #242938;
-        }
-        .dots { display: flex; gap: 6px; }
-        .dot { width: 10px; height: 10px; border-radius: 50%; }
-        .dot-red { background: #ff0044; box-shadow: 0 0 8px #ff0044; }
-        .dot-yellow { background: #ffaa00; }
-        .dot-green { background: #00ffaa; }
-        .terminal-title {
-          font-family: 'Orbitron', sans-serif;
-          font-size: 11px;
-          letter-spacing: 2px;
-          color: #ff0044;
-        }
-        .terminal-body { padding: 30px 24px; text-align: center; }
         h1 {
           font-family: 'Orbitron', sans-serif;
           font-size: 26px;
           letter-spacing: 3px;
-          color: #ffffff;
-          text-shadow: 0 0 10px #ff0044, 0 0 20px #ff0044;
-          margin-bottom: 4px;
+          color: #fff;
+          text-shadow: 0 0 12px #ff0044, 0 0 24px #ff0044;
+          margin-bottom: 5px;
         }
-        p.subtitle { font-size: 11px; letter-spacing: 2px; color: #6a7485; margin-bottom: 20px; }
-        .input-group { margin-bottom: 20px; text-align: left; }
-        label {
-          display: block;
-          font-size: 11px;
-          letter-spacing: 1.5px;
-          color: #ff3366;
-          margin-bottom: 8px;
-          text-transform: uppercase;
-        }
+        p.desc { font-size: 11px; letter-spacing: 2px; color: #737c8c; margin-bottom: 25px; text-transform: uppercase; }
+        .group { text-align: left; margin-bottom: 20px; }
+        label { font-size: 11px; letter-spacing: 1.5px; color: #ff3366; display: block; margin-bottom: 8px; text-transform: uppercase; }
         input {
           width: 100%;
-          padding: 14px 15px;
+          padding: 14px;
           background: #050608;
           border: 1px solid #232936;
           color: #00ffaa;
           font-family: 'Fira Code', monospace;
-          font-size: 17px;
+          font-size: 16px;
           border-radius: 4px;
           outline: none;
         }
@@ -126,7 +99,7 @@ app.get('/', (req, res) => {
           padding: 14px;
           background: #ff0044;
           border: none;
-          color: #ffffff;
+          color: #fff;
           font-family: 'Orbitron', sans-serif;
           font-size: 13px;
           font-weight: 900;
@@ -138,7 +111,7 @@ app.get('/', (req, res) => {
         }
         button:hover { background: #d60039; }
         button:disabled { background: #252833; color: #616675; cursor: not-allowed; }
-        .result-terminal {
+        .result {
           display: none;
           margin-top: 22px;
           padding: 18px;
@@ -146,58 +119,46 @@ app.get('/', (req, res) => {
           border: 1px dashed #ff0044;
           border-radius: 4px;
         }
-        .pair-badge {
+        .code {
           font-family: 'Orbitron', monospace;
           font-size: 28px;
           font-weight: 900;
           letter-spacing: 6px;
-          color: #ffffff;
+          color: #fff;
           text-shadow: 0 0 15px #00ffaa;
           padding: 8px 0;
           cursor: pointer;
         }
-        .copy-tag { font-size: 11px; color: #798294; margin-top: 5px; }
       </style>
     </head>
     <body>
-      <div class="terminal-container">
-        <div class="terminal-box">
-          <div class="terminal-bar">
-            <div class="dots">
-              <div class="dot dot-red"></div>
-              <div class="dot dot-yellow"></div>
-              <div class="dot dot-green"></div>
-            </div>
-            <div class="terminal-title">DARK DINU // V2.0.0</div>
-            <div style="font-size: 10px; color: #555;">PORT 3000</div>
+      <div class="container">
+        <div class="box">
+          <h1>⚡ DARK DINU ⚡</h1>
+          <p class="desc">> SYSTEM INJECTOR V2.0.0</p>
+
+          <div class="group">
+            <label>> Target Phone Number (with Country Code)</label>
+            <input type="text" id="phone" placeholder="94770000000" autocomplete="off" />
           </div>
-          <div class="terminal-body">
-            <h1>⚡ DARK DINU ⚡</h1>
-            <p class="subtitle">Next-Gen Pair Code Injector</p>
 
-            <div class="input-group">
-              <label>> Target WhatsApp Number</label>
-              <input type="text" id="phone" placeholder="94770000000" autocomplete="off" />
-            </div>
+          <button id="btn" onclick="getPair()">[ INITIALIZE LINK ]</button>
 
-            <button id="runBtn" onclick="executePair()">[ GET PAIR CODE ]</button>
-
-            <div id="resultBlock" class="result-terminal">
-              <div style="font-size: 10px; color: #ff3366;">> CLICK CODE TO COPY</div>
-              <div id="pairCode" class="pair-badge" onclick="copyProtocol()">--------</div>
-              <div id="copyTag" class="copy-tag">> ENTER THIS IN WHATSAPP NOW</div>
-            </div>
+          <div id="resBox" class="result">
+            <div style="font-size: 10px; color: #ff3366;">> CLICK CODE TO COPY</div>
+            <div id="codeBadge" class="code" onclick="copy()">--------</div>
+            <div id="statusTag" style="font-size: 10px; color: #798294;">> READY FOR WHATSAPP PAIRING</div>
           </div>
         </div>
       </div>
 
       <script>
-        async function executePair() {
+        async function getPair() {
           const number = document.getElementById('phone').value.trim();
           if (!number) return alert('Phone number එක ඇතුළත් කරන්න!');
 
-          const btn = document.getElementById('runBtn');
-          btn.innerText = 'HANDSHAKING WITH WHATSAPP...';
+          const btn = document.getElementById('btn');
+          btn.innerText = 'INITIALIZING PROTOCOL...';
           btn.disabled = true;
 
           try {
@@ -208,30 +169,30 @@ app.get('/', (req, res) => {
             });
             const data = await res.json();
             if (data.code) {
-              document.getElementById('resultBlock').style.display = 'block';
-              document.getElementById('pairCode').innerText = data.code;
-              btn.innerText = 'CODE READY! ENTER IN WHATSAPP';
+              document.getElementById('resBox').style.display = 'block';
+              document.getElementById('codeBadge').innerText = data.code;
+              btn.innerText = 'ENTER CODE IN WHATSAPP NOW!';
             } else {
               alert(data.error || 'Pairing error!');
-              btn.innerText = '[ GET PAIR CODE ]';
+              btn.innerText = '[ INITIALIZE LINK ]';
               btn.disabled = false;
             }
           } catch (e) {
-            alert('Server error: ' + e.message);
-            btn.innerText = '[ GET PAIR CODE ]';
+            alert('Host failure: ' + e.message);
+            btn.innerText = '[ INITIALIZE LINK ]';
             btn.disabled = false;
           }
         }
 
-        function copyProtocol() {
-          const code = document.getElementById('pairCode').innerText;
+        function copy() {
+          const code = document.getElementById('codeBadge').innerText;
           if (code && code !== '--------') {
             navigator.clipboard.writeText(code);
-            const tag = document.getElementById('copyTag');
+            const tag = document.getElementById('statusTag');
             tag.innerText = '>> COPIED! ENTER IN WHATSAPP <<';
             tag.style.color = '#00ffaa';
             setTimeout(() => {
-              tag.innerText = '> ENTER THIS IN WHATSAPP NOW';
+              tag.innerText = '> READY FOR WHATSAPP PAIRING';
               tag.style.color = '#798294';
             }, 3000);
           }
@@ -244,21 +205,21 @@ app.get('/', (req, res) => {
 
 app.post('/pair', async (req, res) => {
   const { number } = req.body;
-  if (!number) return res.status(400).json({ error: 'Phone number is required.' });
+  if (!number) return res.status(400).json({ error: 'Phone number parameter required.' });
 
   try {
-    const code = await createPairingSocket(number, (socket) => {
+    const code = await requestPairCode(number, (socket) => {
       botSocket = socket;
       setupMessageHandler(botSocket);
     });
     return res.json({ code });
   } catch (err) {
     console.error('Pairing Error:', err);
-    return res.status(500).json({ error: err.message || 'Error creating pairing socket' });
+    return res.status(500).json({ error: err.message || 'Mainframe rejection.' });
   }
 });
 
-app.listen(PORT, () => console.log(`⚡ [DARK DINU] Web Server listening on port ${PORT}`));
+app.listen(PORT, () => console.log(`⚡ [DARK DINU] Web Server live on port ${PORT}`));
 
 // ==========================================
 // 2. Command Loading
@@ -293,7 +254,7 @@ function setupMessageHandler(sock) {
       msg.message.imageMessage?.caption || ''
     ).trim();
 
-    // 1, 2, 3 Interactive replies
+    // 1, 2, 3 Interactive replies for songs
     const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
     if (quotedMsgId && ['1', '2', '3'].includes(textMsg)) {
       const songCmd = commands.get('song');
@@ -319,10 +280,10 @@ function setupMessageHandler(sock) {
 }
 
 // ==========================================
-// 3. Bot Connection Lifecycle (Auto-Start from Mongo)
+// 3. Bot Connection Lifecycle
 // ==========================================
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
   const logger = pino({ level: 'silent' });
 
@@ -334,22 +295,22 @@ async function startBot() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.macOS('Chrome')
+    browser: Browsers.windows('Desktop')
   });
 
   botSocket.ev.on('creds.update', async () => {
     await saveCreds();
-    await backupSessionToMongo();
+    await backupCredentials();
   });
 
   botSocket.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect } = update;
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('⚡ [DARK DINU] Connection closed. Reconnecting...', shouldReconnect);
+      console.log('⚡ [DARK DINU] Link dropped. Reconnecting...', shouldReconnect);
       if (shouldReconnect) startBot();
     } else if (connection === 'open') {
-      console.log('☠️ [DARK DINU] WHATSAPP CONNECTED & READY FOR COMMANDS!');
+      console.log('☠️ [DARK DINU] SYSTEM FULLY CONNECTED VIA MONGODB!');
     }
   });
 
@@ -357,19 +318,19 @@ async function startBot() {
 }
 
 // ==========================================
-// 4. MongoDB Initialization
+// 4. Initialize Database & Session Restore
 // ==========================================
 async function init() {
   try {
     await mongoose.connect(MONGO_URI);
     console.log('✅ [DARK DINU] Connected to MongoDB (Cluster: HESHAN-MD)!');
 
-    const restored = await restoreSessionFromMongo();
-    if (restored && fs.existsSync(path.join(sessionPath, 'creds.json'))) {
-      console.log('🔄 [DARK DINU] Session restored from Cloud. Starting bot daemon...');
+    const restored = await restoreCredentials();
+    if (restored && fs.existsSync(path.join(sessionDir, 'creds.json'))) {
+      console.log('🔄 [DARK DINU] Cloud session detected. Booting bot daemon...');
       startBot();
     } else {
-      console.log('ℹ️ [DARK DINU] No session found. Please pair via Web Dashboard.');
+      console.log('ℹ️ [DARK DINU] No saved session found. Please pair via Web Dashboard.');
     }
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err);
