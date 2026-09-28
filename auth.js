@@ -14,12 +14,14 @@ const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
+// MongoDB Session Schema
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   files: { type: Map, of: String }
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
+// Restore session from MongoDB
 async function restoreCredentials() {
   try {
     const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
@@ -39,6 +41,7 @@ async function restoreCredentials() {
   }
 }
 
+// Backup session to MongoDB
 async function backupCredentials() {
   try {
     if (!fs.existsSync(sessionDir)) return;
@@ -66,11 +69,16 @@ async function backupCredentials() {
 let activeSocket = null;
 
 async function requestPairCode(phoneNumber, onLoginSuccess) {
+  // Clear any existing active socket connection
   if (activeSocket) {
-    try { activeSocket.end(); } catch (e) {}
+    try { 
+      activeSocket.ws?.close();
+      activeSocket.end(); 
+    } catch (e) {}
     activeSocket = null;
   }
 
+  // Clear existing session directory to prevent corrupted state
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -88,13 +96,13 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Ubuntu Chrome භාවිතා කරන්න (Pairing වලට block නොවී connect වෙනවා)
+    // Ubuntu Chrome signature prevents handshake drops
     browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
     markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 0,
-    keepAliveIntervalMs: 15000
+    keepAliveIntervalMs: 10000
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -112,7 +120,7 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       if (statusCode === DisconnectReason.restartRequired) {
-        console.log('[DARK DINU] Stream restart required, maintaining socket...');
+        console.log('[DARK DINU] Stream restart required, maintaining connection...');
       } else if (statusCode === DisconnectReason.loggedOut) {
         console.log('[DARK DINU] Session logged out.');
       }
@@ -121,8 +129,8 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
 
   const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-  // Socket handshake එක set වෙනකම් තත්පර 4-5ක් delay දෙන්න
-  await delay(5000);
+  // Wait 4 seconds for socket to establish connection with WhatsApp servers
+  await delay(4000);
 
   if (!activeSocket.authState.creds.registered) {
     const code = await activeSocket.requestPairingCode(cleanNumber);
