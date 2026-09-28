@@ -3,6 +3,7 @@ const path = require('path');
 const mongoose = require('mongoose');
 const { 
   default: makeWASocket, 
+  delay, 
   useMultiFileAuthState, 
   fetchLatestBaileysVersion, 
   makeCacheableSignalKeyStore,
@@ -13,14 +14,14 @@ const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Session Model
+// MongoDB Session Storage Schema
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   files: { type: Map, of: String }
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// Cloud එකෙන් Session Restore කිරීම
+// MongoDB එකෙන් session එක restore කිරීම
 async function restoreCredentials() {
   try {
     const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
@@ -35,12 +36,12 @@ async function restoreCredentials() {
     }
     return true;
   } catch (e) {
-    console.error('[DATABASE] Session restore failed:', e);
+    console.error('Session restore failed:', e);
     return false;
   }
 }
 
-// Session එක Cloud එකට Backup කිරීම
+// Session එක MongoDB එකට sync කිරීම
 async function backupCredentials() {
   try {
     if (!fs.existsSync(sessionDir)) return;
@@ -59,21 +60,22 @@ async function backupCredentials() {
       { files: filesMap },
       { upsert: true, new: true }
     );
-    console.log('⚡ [DARK DINU] Session cloud-synced to MongoDB!');
+    console.log('⚡ [DARK DINU] Session synced with MongoDB!');
   } catch (e) {
-    console.error('[DATABASE] Backup error:', e);
+    console.error('Session backup error:', e);
   }
 }
 
 let activeSocket = null;
 
-// Pairing Code ලබාගැනීම
 async function requestPairCode(phoneNumber, onLoginSuccess) {
+  // පරණ socket එකක් ඇත්නම් clean කිරීම
   if (activeSocket) {
     try { activeSocket.end(); } catch (e) {}
     activeSocket = null;
   }
 
+  // පරණ session folder එක clear කිරීම
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -91,9 +93,10 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.macOS('Chrome'),
+    // macOS Safari Browser Signature (Render එකට සුපිරියටම ගැලපෙන එක)
+    browser: Browsers.macOS('Safari'),
     syncFullHistory: false,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     keepAliveIntervalMs: 10000
@@ -108,41 +111,28 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
     const { connection, lastDisconnect } = update;
     
     if (connection === 'open') {
-      console.log('🎉 [DARK DINU] WHATSAPP DEVICE LINKED SUCCESSFULLY!');
+      console.log('🎉 [DARK DINU] WHATSAPP DEVICE LINKED & VERIFIED!');
       await backupCredentials();
       if (onLoginSuccess) onLoginSuccess(activeSocket);
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       if (statusCode !== DisconnectReason.loggedOut) {
-        console.log('[DARK DINU] Tunnel active, finalizing keys...');
+        console.log('[DARK DINU] Reconnecting / maintaining session stream...');
       }
     }
   });
 
   let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-  return new Promise((resolve, reject) => {
-    let codeDone = false;
-    const timer = setTimeout(() => {
-      if (!codeDone) {
-        reject(new Error('WhatsApp connection timeout. Please refresh and try again.'));
-      }
-    }, 25000);
+  // QR event එකට රැඳෙන්නේ නැතුව, Socket handshake එක establish වෙන්න හරියටම තත්පර 3ක් දීලා code එක ඉල්ලීම
+  await delay(3000);
 
-    activeSocket.ev.on('connection.update', async (update) => {
-      const { qr } = update;
-      if (qr && !activeSocket.authState.creds.registered && !codeDone) {
-        codeDone = true;
-        clearTimeout(timer);
-        try {
-          const code = await activeSocket.requestPairingCode(cleanNumber);
-          resolve(code);
-        } catch (err) {
-          reject(err);
-        }
-      }
-    });
-  });
+  if (!activeSocket.authState.creds.registered) {
+    const code = await activeSocket.requestPairingCode(cleanNumber);
+    return code;
+  } else {
+    throw new Error('Device already registered.');
+  }
 }
 
 module.exports = {
