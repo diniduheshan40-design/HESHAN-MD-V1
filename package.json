@@ -7,7 +7,6 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "6.7.9",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
