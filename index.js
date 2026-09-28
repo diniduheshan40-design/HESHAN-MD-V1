@@ -4,8 +4,19 @@ const path = require('path');
 const fs = require('fs');
 const pino = require('pino');
 const mongoose = require('mongoose');
-const { default: makeWASocket, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
-const { useMongoAuthState, requestPairCode, SessionModel } = require('./auth');
+const { 
+  default: makeWASocket, 
+  fetchLatestBaileysVersion, 
+  useMultiFileAuthState, 
+  DisconnectReason 
+} = require('@whiskeysockets/baileys');
+
+const { 
+  requestPairCode, 
+  restoreSessionFromMongo, 
+  backupSessionToMongo, 
+  sessionPath 
+} = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,11 +55,7 @@ app.get('/', (req, res) => {
           justify-content: center;
           overflow-x: hidden;
         }
-        .container {
-          width: 92%;
-          max-width: 440px;
-          position: relative;
-        }
+        .container { width: 92%; max-width: 440px; position: relative; }
         .glow-box {
           position: absolute;
           inset: -2px;
@@ -66,7 +73,7 @@ app.get('/', (req, res) => {
         .card {
           position: relative;
           z-index: 1;
-          background: rgba(14, 16, 20, 0.85);
+          background: rgba(14, 16, 20, 0.9);
           backdrop-filter: blur(25px);
           border: 1px solid rgba(255, 0, 55, 0.35);
           border-radius: 18px;
@@ -96,16 +103,8 @@ app.get('/', (req, res) => {
           text-shadow: 0 0 15px rgba(255, 0, 55, 0.8);
           margin-bottom: 6px;
         }
-        p.subtext {
-          font-size: 14px;
-          color: #8c909a;
-          margin-bottom: 25px;
-          font-weight: 500;
-        }
-        .input-wrap {
-          text-align: left;
-          margin-bottom: 20px;
-        }
+        p.subtext { font-size: 14px; color: #8c909a; margin-bottom: 25px; font-weight: 500; }
+        .input-wrap { text-align: left; margin-bottom: 20px; }
         label {
           font-size: 13px;
           text-transform: uppercase;
@@ -152,12 +151,7 @@ app.get('/', (req, res) => {
           transform: translateY(-2px);
           box-shadow: 0 0 30px rgba(255, 0, 55, 0.7);
         }
-        button:disabled {
-          background: #2a2c33;
-          box-shadow: none;
-          cursor: not-allowed;
-          transform: none;
-        }
+        button:disabled { background: #2a2c33; box-shadow: none; cursor: not-allowed; transform: none; }
         .code-container {
           display: none;
           margin-top: 25px;
@@ -203,29 +197,20 @@ app.get('/', (req, res) => {
           box-shadow: none;
           transition: 0.2s;
         }
-        .copy-btn:hover {
-          background: #ff0037;
-          color: #fff;
-          border-color: #ff0037;
-        }
-        .footer {
-          margin-top: 20px;
-          font-size: 12px;
-          color: #555861;
-          letter-spacing: 1px;
-        }
+        .copy-btn:hover { background: #ff0037; color: #fff; border-color: #ff0037; }
+        .footer { margin-top: 20px; font-size: 12px; color: #555861; letter-spacing: 1px; }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="glow-box"></div>
         <div class="card">
-          <div class="header-tag">Official Deployment Engine</div>
+          <div class="header-tag">Official Engine</div>
           <h1>⚡ DARK DINU ⚡</h1>
-          <p class="subtext">Next-Gen Multi-Device WhatsApp Pairing Engine</p>
+          <p class="subtext">Multi-Device High Speed Pairing</p>
 
           <div class="input-wrap">
-            <label>WhatsApp Number</label>
+            <label>WhatsApp Phone Number</label>
             <input type="text" id="phone" placeholder="94770000000" autocomplete="off" />
           </div>
 
@@ -237,9 +222,7 @@ app.get('/', (req, res) => {
             <button class="copy-btn" onclick="copyCode()">📋 COPY CODE</button>
           </div>
 
-          <div class="footer">
-            ⚡ DARK DINU MD • V2.0.0
-          </div>
+          <div class="footer">⚡ DARK DINU MD • V2.0.0</div>
         </div>
       </div>
 
@@ -247,10 +230,10 @@ app.get('/', (req, res) => {
         async function requestPair() {
           const numInput = document.getElementById('phone');
           const number = numInput.value.trim();
-          if (!number) return alert('කරුණාකර ඔබගේ WhatsApp අංකය ඇතුළත් කරන්න!');
+          if (!number) return alert('කරුණාකර WhatsApp අංකය ඇතුළත් කරන්න!');
 
           const btn = document.getElementById('submitBtn');
-          btn.innerText = 'GENERATING PAIR CODE...';
+          btn.innerText = 'GENERATING CODE...';
           btn.disabled = true;
 
           try {
@@ -266,7 +249,7 @@ app.get('/', (req, res) => {
               const codeText = document.getElementById('codeText');
               codeText.innerText = data.code;
               display.style.display = 'block';
-              btn.innerText = 'CODE READY! ENTER IN WHATSAPP';
+              btn.innerText = 'ENTER CODE IN WHATSAPP NOW!';
             } else {
               alert(data.error || 'Pairing error!');
               btn.innerText = 'GENERATE PAIR CODE';
@@ -297,9 +280,9 @@ app.post('/pair', async (req, res) => {
   if (!number) return res.status(400).json({ error: 'Phone number is required' });
 
   try {
-    const code = await requestPairCode(number, () => {
-      // Background handshake verify වූ විට කෙලින්ම bot connection එක live කරවීම
-      if (!sockInstance) startBot();
+    const code = await requestPairCode(number, (socket) => {
+      sockInstance = socket;
+      setupMessageHandler(sockInstance);
     });
     return res.json({ code });
   } catch (err) {
@@ -330,35 +313,8 @@ if (fs.existsSync(commandsDir)) {
   });
 }
 
-// ==========================================
-// 3. Bot Connection Lifecycle
-// ==========================================
-async function startBot() {
-  const { state, saveCreds } = await useMongoAuthState();
-  const { version } = await fetchLatestBaileysVersion();
-
-  sockInstance = makeWASocket({
-    version,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
-    auth: state,
-    browser: ['Ubuntu', 'Chrome', '20.0.04']
-  });
-
-  sockInstance.ev.on('creds.update', saveCreds);
-
-  sockInstance.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'close') {
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('[DARK DINU] Connection closed. Reconnecting...', shouldReconnect);
-      if (shouldReconnect) startBot();
-    } else if (connection === 'open') {
-      console.log('✅ [DARK DINU] Connected Successfully via MongoDB Session!');
-    }
-  });
-
-  sockInstance.ev.on('messages.upsert', async ({ messages, type }) => {
+function setupMessageHandler(sock) {
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
@@ -375,7 +331,7 @@ async function startBot() {
     if (quotedMsgId && ['1', '2', '3'].includes(textMsg)) {
       const songCmd = commands.get('song');
       if (songCmd) {
-        return await songCmd.execute(sockInstance, msg, [textMsg], chatJid);
+        return await songCmd.execute(sock, msg, [textMsg], chatJid);
       }
     }
 
@@ -387,7 +343,7 @@ async function startBot() {
 
     if (cmd) {
       try {
-        await cmd.execute(sockInstance, msg, args, chatJid);
+        await cmd.execute(sock, msg, args, chatJid);
       } catch (err) {
         console.error(`Error in ${cmdName}:`, err);
       }
@@ -396,16 +352,53 @@ async function startBot() {
 }
 
 // ==========================================
-// 4. Initialize Database
+// 3. Bot Connection Lifecycle
+// ==========================================
+async function startBot() {
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+  const { version } = await fetchLatestBaileysVersion();
+
+  sockInstance = makeWASocket({
+    version,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    auth: state,
+    browser: ['Chrome (Linux)', 'Chrome', '122.0.0.0']
+  });
+
+  sockInstance.ev.on('creds.update', async () => {
+    await saveCreds();
+    await backupSessionToMongo();
+  });
+
+  sockInstance.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('[DARK DINU] Connection closed. Reconnecting...', shouldReconnect);
+      if (shouldReconnect) startBot();
+    } else if (connection === 'open') {
+      console.log('✅ [DARK DINU] Connected Successfully via MongoDB Session!');
+    }
+  });
+
+  setupMessageHandler(sockInstance);
+}
+
+// ==========================================
+// 4. Initialize Database & Session Restore
 // ==========================================
 async function init() {
   try {
     await mongoose.connect(MONGO_URI);
     console.log('✅ [DARK DINU] Connected to MongoDB (Database: HESHAN-MD)!');
 
-    const existingSession = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
-    if (existingSession) {
+    const restored = await restoreSessionFromMongo();
+    if (restored && fs.existsSync(path.join(sessionPath, 'creds.json'))) {
+      console.log('🔄 [DARK DINU] Session restored from cloud, starting bot...');
       startBot();
+    } else {
+      console.log('ℹ️ [DARK DINU] No active session found. Please pair via Web Dashboard.');
     }
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err);
