@@ -1,5 +1,12 @@
 const mongoose = require('mongoose');
-const { default: makeWASocket, delay, fetchLatestBaileysVersion, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
+const { 
+  default: makeWASocket, 
+  delay, 
+  fetchLatestBaileysVersion, 
+  initAuthCreds, 
+  BufferJSON,
+  DisconnectReason
+} = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 const SessionSchema = new mongoose.Schema({
@@ -66,40 +73,50 @@ async function useMongoAuthState(sessionId = 'dark_dinu_session') {
   };
 }
 
-async function getPairingCode(phoneNumber, onPairCode) {
-  // කලින් අසාර්ථක වූ session එකක් ඇත්නම් clear කරමු
+let activePairSocket = null;
+
+async function requestPairCode(phoneNumber, onConnected) {
+  // පරණ අසම්පූර්ණ session clear කර නැවුම් connection එකක් ගැනීම
   await SessionModel.deleteOne({ sessionId: 'dark_dinu_session' }).catch(() => {});
 
-  const { state, saveCreds } = await useMongoAuthState('dark_dinu_session');
-  const { version, isLatest } = await fetchLatestBaileysVersion();
+  if (activePairSocket) {
+    try { activePairSocket.end(); } catch (e) {}
+  }
 
-  const sock = makeWASocket({
+  const { state, saveCreds } = await useMongoAuthState('dark_dinu_session');
+  const { version } = await fetchLatestBaileysVersion();
+
+  activePairSocket = makeWASocket({
     version,
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     auth: state,
-    // නව WhatsApp update වලට ගැලපෙන standard browser signature එක
-    browser: ['Ubuntu', 'Chrome', '20.0.04']
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 10000
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  activePairSocket.ev.on('creds.update', saveCreds);
 
-  if (!sock.authState.creds.registered) {
-    let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-    
-    // Pairing code එක ඉල්ලීමට පෙර තත්පර 4ක් delay කිරීම (Block වීම වළක්වයි)
-    await delay(4000);
-    
-    try {
-      const code = await sock.requestPairingCode(cleanNumber);
-      if (onPairCode) onPairCode(code);
-    } catch (err) {
-      console.error('Pairing Code Request Error:', err);
-      throw err;
+  activePairSocket.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === 'open') {
+      console.log('✅ [DARK DINU] Device linked and verified successfully!');
+      if (onConnected) onConnected();
+    } else if (connection === 'close') {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      if (code !== DisconnectReason.loggedOut) {
+        console.log('[DARK DINU] Pair handshake completed or socket refreshing.');
+      }
     }
-  }
+  });
 
-  return sock;
+  let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+  await delay(3500);
+  const pairCode = await activePairSocket.requestPairingCode(cleanNumber);
+  return pairCode;
 }
 
-module.exports = { useMongoAuthState, getPairingCode, SessionModel };
+module.exports = { useMongoAuthState, requestPairCode, SessionModel };
