@@ -14,14 +14,12 @@ const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Session Storage Schema
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   files: { type: Map, of: String }
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// MongoDB එකෙන් session එක restore කිරීම
 async function restoreCredentials() {
   try {
     const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
@@ -41,7 +39,6 @@ async function restoreCredentials() {
   }
 }
 
-// Session එක MongoDB එකට sync කිරීම
 async function backupCredentials() {
   try {
     if (!fs.existsSync(sessionDir)) return;
@@ -69,13 +66,11 @@ async function backupCredentials() {
 let activeSocket = null;
 
 async function requestPairCode(phoneNumber, onLoginSuccess) {
-  // පරණ socket එකක් ඇත්නම් clean කිරීම
   if (activeSocket) {
     try { activeSocket.end(); } catch (e) {}
     activeSocket = null;
   }
 
-  // පරණ session folder එක clear කිරීම
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -83,7 +78,7 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
-  const logger = pino({ level: 'silent' });
+  const logger = pino({ level: 'fatal' });
 
   activeSocket = makeWASocket({
     version,
@@ -93,13 +88,13 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // macOS Safari Browser Signature (Render එකට සුපිරියටම ගැලපෙන එක)
-    browser: Browsers.macOS('Safari'),
+    // Ubuntu Chrome භාවිතා කරන්න (Pairing වලට block නොවී connect වෙනවා)
+    browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
-    markOnlineOnConnect: true,
+    markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 10000
+    defaultQueryTimeoutMs: 0,
+    keepAliveIntervalMs: 15000
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -116,16 +111,18 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       if (onLoginSuccess) onLoginSuccess(activeSocket);
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      if (statusCode !== DisconnectReason.loggedOut) {
-        console.log('[DARK DINU] Reconnecting / maintaining session stream...');
+      if (statusCode === DisconnectReason.restartRequired) {
+        console.log('[DARK DINU] Stream restart required, maintaining socket...');
+      } else if (statusCode === DisconnectReason.loggedOut) {
+        console.log('[DARK DINU] Session logged out.');
       }
     }
   });
 
-  let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+  const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-  // QR event එකට රැඳෙන්නේ නැතුව, Socket handshake එක establish වෙන්න හරියටම තත්පර 3ක් දීලා code එක ඉල්ලීම
-  await delay(3000);
+  // Socket handshake එක set වෙනකම් තත්පර 4-5ක් delay දෙන්න
+  await delay(5000);
 
   if (!activeSocket.authState.creds.registered) {
     const code = await activeSocket.requestPairingCode(cleanNumber);
