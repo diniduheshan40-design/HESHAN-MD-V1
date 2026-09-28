@@ -1,16 +1,73 @@
-const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
+const mongoose = require('mongoose');
+const { default: makeWASocket, delay, fetchLatestBaileysVersion, Browsers, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const path = require('path');
-const fs = require('fs');
 
-const sessionDir = path.join(__dirname, 'session');
+const SessionSchema = new mongoose.Schema({
+  sessionId: { type: String, required: true, unique: true },
+  data: { type: String, required: true }
+});
 
-async function getPairingCode(phoneNumber, onPairCode) {
-  if (!fs.existsSync(sessionDir)) {
-    fs.mkdirSync(sessionDir, { recursive: true });
+const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
+
+async function useMongoAuthState(sessionId = 'dark_dinu_session') {
+  let creds;
+  const existing = await SessionModel.findOne({ sessionId });
+  
+  if (existing && existing.data) {
+    try {
+      creds = JSON.parse(existing.data, BufferJSON.reviver);
+    } catch (e) {
+      creds = initAuthCreds();
+    }
+  } else {
+    creds = initAuthCreds();
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const saveCreds = async () => {
+    await SessionModel.findOneAndUpdate(
+      { sessionId },
+      { data: JSON.stringify(creds, BufferJSON.replacer) },
+      { upsert: true, new: true }
+    );
+  };
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: (type, ids) => {
+          return ids.reduce((dict, id) => {
+            let value = creds[type]?.[id];
+            if (value) {
+              if (type === 'app-state-sync-key') {
+                value = BufferJSON.reviver(type, value);
+              }
+              dict[id] = value;
+            }
+            return dict;
+          }, {});
+        },
+        set: (data) => {
+          for (const category in data) {
+            for (const id in data[category]) {
+              const value = data[category][id];
+              const name = `${category}-${id}`;
+              if (value) {
+                creds[name] = value;
+              } else {
+                delete creds[name];
+              }
+            }
+          }
+        }
+      }
+    },
+    saveCreds
+  };
+}
+
+async function getPairingCode(phoneNumber, onPairCode) {
+  const { state, saveCreds } = await useMongoAuthState();
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
@@ -33,4 +90,4 @@ async function getPairingCode(phoneNumber, onPairCode) {
   return sock;
 }
 
-module.exports = { getPairingCode, sessionDir };
+module.exports = { useMongoAuthState, getPairingCode, SessionModel };
