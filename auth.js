@@ -6,20 +6,21 @@ const {
   useMultiFileAuthState, 
   fetchLatestBaileysVersion, 
   makeCacheableSignalKeyStore,
+  Browsers,
   DisconnectReason 
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Session Storage Schema
+// MongoDB Session Model
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   files: { type: Map, of: String }
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// MongoDB එකෙන් session restore කිරීම
+// Cloud එකෙන් Session Restore කිරීම
 async function restoreCredentials() {
   try {
     const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
@@ -34,12 +35,12 @@ async function restoreCredentials() {
     }
     return true;
   } catch (e) {
-    console.error('Session restore failed:', e);
+    console.error('[DATABASE] Session restore failed:', e);
     return false;
   }
 }
 
-// Session එක සම්පූර්ණයෙන්ම MongoDB එකට backup කිරීම
+// Session එක Cloud එකට Backup කිරීම
 async function backupCredentials() {
   try {
     if (!fs.existsSync(sessionDir)) return;
@@ -58,22 +59,21 @@ async function backupCredentials() {
       { files: filesMap },
       { upsert: true, new: true }
     );
-    console.log('⚡ [DARK DINU] Complete session saved to MongoDB!');
+    console.log('⚡ [DARK DINU] Session cloud-synced to MongoDB!');
   } catch (e) {
-    console.error('Session backup failed:', e);
+    console.error('[DATABASE] Backup error:', e);
   }
 }
 
 let activeSocket = null;
 
+// Pairing Code ලබාගැනීම
 async function requestPairCode(phoneNumber, onLoginSuccess) {
-  // කලින් open කරපු socket තියෙනවා නම් close කරමු
   if (activeSocket) {
     try { activeSocket.end(); } catch (e) {}
     activeSocket = null;
   }
 
-  // පරණ හිරවුණු session folder එක clear කරමු
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -91,13 +91,12 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Standard Chrome Browser
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    browser: Browsers.macOS('Chrome'),
     syncFullHistory: false,
     markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000
+    keepAliveIntervalMs: 10000
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -115,31 +114,27 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       if (statusCode !== DisconnectReason.loggedOut) {
-        console.log('[DARK DINU] Handshake maintaining...');
+        console.log('[DARK DINU] Tunnel active, finalizing keys...');
       }
     }
   });
 
   let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-  // 💡 ප්‍රධානම වෙනස: WhatsApp එකෙන් Handshake QR Frame එක ආපු මොහොතේදීම Code එක ඉල්ලීම
   return new Promise((resolve, reject) => {
-    let codeSent = false;
-
-    // Timeout safety
+    let codeDone = false;
     const timer = setTimeout(() => {
-      if (!codeSent) {
-        reject(new Error('WhatsApp connection timeout. Refresh page & try again.'));
+      if (!codeDone) {
+        reject(new Error('WhatsApp connection timeout. Please refresh and try again.'));
       }
-    }, 30000);
+    }, 25000);
 
     activeSocket.ev.on('connection.update', async (update) => {
       const { qr } = update;
-      if (qr && !activeSocket.authState.creds.registered && !codeSent) {
-        codeSent = true;
+      if (qr && !activeSocket.authState.creds.registered && !codeDone) {
+        codeDone = true;
         clearTimeout(timer);
         try {
-          // Socket එක ready වූ සැණින් Code එක ලබාගැනීම
           const code = await activeSocket.requestPairingCode(cleanNumber);
           resolve(code);
         } catch (err) {
@@ -155,5 +150,6 @@ module.exports = {
   restoreCredentials,
   backupCredentials,
   sessionDir,
-  SessionModel
+  SessionModel,
+  getActiveSocket: () => activeSocket
 };
