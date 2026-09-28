@@ -9,8 +9,6 @@ const { useMongoAuthState, getPairingCode, SessionModel } = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// ඔබ ලබාදුන් නිවැරදි MongoDB Connection String එක
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://diniduheshan40_db_user:Heshan2007@cluster0.5gazebm.mongodb.net/HESHAN-MD?retryWrites=true&w=majority&appName=Cluster0";
 
 app.use(express.json());
@@ -18,9 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 
 let sockInstance = null;
 
-// ==========================================
-// 1. Web Pairing Page (UI)
-// ==========================================
+// Pairing Web Dashboard
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -100,7 +96,7 @@ app.get('/', (req, res) => {
       <script>
         async function requestPair() {
           const num = document.getElementById('phone').value.trim();
-          if (!num) return alert('කරුණාකර Phone Number එක ඇතුළත් කරන්න!');
+          if (!num) return alert('Phone Number එක ඇතුළත් කරන්න!');
           const btn = document.querySelector('button');
           btn.innerText = 'Connecting...';
           btn.disabled = true;
@@ -147,9 +143,7 @@ app.post('/pair', async (req, res) => {
 
 app.listen(PORT, () => console.log(`[DARK DINU] Web Server listening on port ${PORT}`));
 
-// ==========================================
-// 2. Command Handler Loading
-// ==========================================
+// Commands loader
 const commands = new Map();
 const commandsDir = path.join(__dirname, 'commands');
 
@@ -167,9 +161,6 @@ if (fs.existsSync(commandsDir)) {
   });
 }
 
-// ==========================================
-// 3. Bot Connection Lifecycle
-// ==========================================
 async function startBot() {
   const { state, saveCreds } = await useMongoAuthState();
   const { version } = await fetchLatestBaileysVersion();
@@ -201,10 +192,20 @@ async function startBot() {
     if (!msg.message || msg.key.fromMe) return;
 
     const chatJid = msg.key.remoteJid;
-    const textMsg = 
+    const textMsg = (
       msg.message.conversation || 
       msg.message.extendedTextMessage?.text || 
-      msg.message.imageMessage?.caption || '';
+      msg.message.imageMessage?.caption || ''
+    ).trim();
+
+    // 1, 2, 3 Interactive replies හසුරුවා ගැනීම
+    const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
+    if (quotedMsgId && ['1', '2', '3'].includes(textMsg)) {
+      const songCmd = commands.get('song');
+      if (songCmd) {
+        return await songCmd.execute(sockInstance, msg, [textMsg], chatJid);
+      }
+    }
 
     const prefix = '.';
     if (!textMsg.startsWith(prefix)) return;
@@ -222,9 +223,6 @@ async function startBot() {
   });
 }
 
-// ==========================================
-// 4. Database Connect & Bootstrap
-// ==========================================
 async function init() {
   try {
     await mongoose.connect(MONGO_URI);
