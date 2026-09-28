@@ -3,87 +3,82 @@ const path = require('path');
 const mongoose = require('mongoose');
 const { 
   default: makeWASocket, 
+  delay, 
+  useMultiFileAuthState, 
   fetchLatestBaileysVersion, 
-  useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   Browsers,
-  DisconnectReason
+  DisconnectReason 
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
-const sessionPath = path.join(__dirname, 'session');
+const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Schema
+// MongoDB Session Storage Schema
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
-  files: { type: Map, of: String }
+  creds: { type: String, required: true }
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// MongoDB එකෙන් session එක restore කරගැනීම
-async function restoreSessionFromMongo() {
+// MongoDB එකෙන් Credentials Restore කිරීම
+async function restoreCredentials() {
   try {
-    const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
-    if (!doc || !doc.files || doc.files.size === 0) return false;
+    const record = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
+    if (!record || !record.creds) return false;
 
-    if (!fs.existsSync(sessionPath)) {
-      fs.mkdirSync(sessionPath, { recursive: true });
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
     }
 
-    for (let [fileName, content] of doc.files.entries()) {
-      fs.writeFileSync(path.join(sessionPath, fileName), content, 'utf-8');
-    }
+    const credsJson = Buffer.from(record.creds, 'base64').toString('utf-8');
+    fs.writeFileSync(path.join(sessionDir, 'creds.json'), credsJson, 'utf-8');
     return true;
-  } catch (err) {
-    console.error('❌ Session restore error:', err);
+  } catch (e) {
+    console.error('Session restore failed:', e);
     return false;
   }
 }
 
-// Local Session files MongoDB එකට save කිරීම
-async function backupSessionToMongo() {
+// Session එක MongoDB එකට Base64 String එකක් ලෙස Backup කිරීම
+async function backupCredentials() {
   try {
-    if (!fs.existsSync(sessionPath)) return;
-    const fileList = fs.readdirSync(sessionPath);
-    const filesMap = new Map();
+    const credsPath = path.join(sessionDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) return;
 
-    for (let file of fileList) {
-      const filePath = path.join(sessionPath, file);
-      if (fs.statSync(filePath).isFile()) {
-        filesMap.set(file, fs.readFileSync(filePath, 'utf-8'));
-      }
-    }
+    const credsContent = fs.readFileSync(credsPath, 'utf-8');
+    const base64Creds = Buffer.from(credsContent).toString('base64');
 
     await SessionModel.findOneAndUpdate(
       { sessionId: 'dark_dinu_session' },
-      { files: filesMap },
+      { creds: base64Creds },
       { upsert: true, new: true }
     );
-    console.log('⚡ [DARK DINU] Session synced with MongoDB!');
-  } catch (err) {
-    console.error('❌ Session backup error:', err);
+    console.log('⚡ [DARK DINU] Session secured in MongoDB successfully!');
+  } catch (e) {
+    console.error('Session backup failed:', e);
   }
 }
 
 let activeSocket = null;
 
-// QR/Handshake event එක fully ready වන තෙක් රැඳී සිට pairing code එක ලබාගැනීම
-async function createPairingSocket(phoneNumber, onOpenConnection) {
-  // පරණ හිරවුණු session සම්පූර්ණයෙන්ම clear කිරීම
+async function requestPairCode(phoneNumber, onLoginSuccess) {
+  // පරණ session folder එක සම්පූර්ණයෙන්ම clear කිරීම
   if (activeSocket) {
     try { activeSocket.end(); } catch (e) {}
     activeSocket = null;
   }
 
-  if (fs.existsSync(sessionPath)) {
-    fs.rmSync(sessionPath, { recursive: true, force: true });
+  if (fs.existsSync(sessionDir)) {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
   }
-  fs.mkdirSync(sessionPath, { recursive: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
 
-  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
   const logger = pino({ level: 'silent' });
 
+  // WhatsApp Web protocol handshake එක හිර නොවී තියාගන්නා නිවැරදි configuration එක
   activeSocket = makeWASocket({
     version,
     logger,
@@ -92,65 +87,180 @@ async function createPairingSocket(phoneNumber, onOpenConnection) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.macOS('Chrome'),
+    // New WhatsApp Web Signature
+    browser: Browsers.windows('Desktop'),
     syncFullHistory: false,
-    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: true,
     connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000
+    keepAliveIntervalMs: 10000
   });
 
   activeSocket.ev.on('creds.update', async () => {
     await saveCreds();
-    await backupSessionToMongo();
+    await backupCredentials();
   });
 
   activeSocket.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
+    
     if (connection === 'open') {
-      console.log('🎉 [DARK DINU] WhatsApp LINKED & VERIFIED SUCCESSFULLY!');
-      await backupSessionToMongo();
-      if (onOpenConnection) onOpenConnection(activeSocket);
+      console.log('🎉 [DARK DINU] WHATSAPP DEVICE LINKED SUCCESSFULLY!');
+      await backupCredentials();
+      if (onLoginSuccess) onLoginSuccess(activeSocket);
     } else if (connection === 'close') {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      if (code !== DisconnectReason.loggedOut && code !== 401) {
-        console.log('[DARK DINU] Connection syncing in progress...');
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log('[DARK DINU] Maintaining socket connection...');
       }
     }
   });
 
-  // WhatsApp Handshake එක ready වන තුරු (QR frame එක එනකම්) රැඳී සිටීම
-  return new Promise((resolve, reject) => {
-    let codeRequested = false;
-    const timeout = setTimeout(() => {
-      if (!codeRequested) {
-        reject(new Error('WhatsApp handshake timeout. Please try again.'));
-      }
-    }, 25000);
+  // Numbers පමණක් ලබාගැනීම
+  let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-    activeSocket.ev.on('connection.update', async (update) => {
-      const { qr } = update;
-      // Socket එක WhatsApp server එකත් එක්ක handshake එක හදාගත් සැණින් Pairing Code එක request කරයි
-      if (qr && !activeSocket.authState.creds.registered && !codeRequested) {
-        codeRequested = true;
-        clearTimeout(timeout);
-        try {
-          let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-          const code = await activeSocket.requestPairingCode(cleanNumber);
-          resolve(code);
-        } catch (err) {
-          reject(err);
-        }
-      }
-    });
-  });
+  // Handshake එක stabilize වීමට තත්පර 3ක් delay කර pairing code එක ඉල්ලීම
+  await delay(3000);
+  const code = await activeSocket.requestPairingCode(cleanNumber);
+  return code;
 }
 
 module.exports = {
-  createPairingSocket,
-  restoreSessionFromMongo,
-  backupSessionToMongo,
-  sessionPath,
-  SessionModel,
-  getActiveSocket: () => activeSocket
+  requestPairCode,
+  restoreCredentials,
+  backupCredentials,
+  sessionDir,
+  SessionModel
+};
+const fs = require('fs');
+const path = require('path');
+const mongoose = require('mongoose');
+const { 
+  default: makeWASocket, 
+  delay, 
+  useMultiFileAuthState, 
+  fetchLatestBaileysVersion, 
+  makeCacheableSignalKeyStore,
+  Browsers,
+  DisconnectReason 
+} = require('@whiskeysockets/baileys');
+const pino = require('pino');
+
+const sessionDir = path.join(__dirname, 'session');
+
+// MongoDB Session Storage Schema
+const SessionSchema = new mongoose.Schema({
+  sessionId: { type: String, required: true, unique: true },
+  creds: { type: String, required: true }
+});
+const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
+
+// MongoDB එකෙන් Credentials Restore කිරීම
+async function restoreCredentials() {
+  try {
+    const record = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
+    if (!record || !record.creds) return false;
+
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
+
+    const credsJson = Buffer.from(record.creds, 'base64').toString('utf-8');
+    fs.writeFileSync(path.join(sessionDir, 'creds.json'), credsJson, 'utf-8');
+    return true;
+  } catch (e) {
+    console.error('Session restore failed:', e);
+    return false;
+  }
+}
+
+// Session එක MongoDB එකට Base64 String එකක් ලෙස Backup කිරීම
+async function backupCredentials() {
+  try {
+    const credsPath = path.join(sessionDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) return;
+
+    const credsContent = fs.readFileSync(credsPath, 'utf-8');
+    const base64Creds = Buffer.from(credsContent).toString('base64');
+
+    await SessionModel.findOneAndUpdate(
+      { sessionId: 'dark_dinu_session' },
+      { creds: base64Creds },
+      { upsert: true, new: true }
+    );
+    console.log('⚡ [DARK DINU] Session secured in MongoDB successfully!');
+  } catch (e) {
+    console.error('Session backup failed:', e);
+  }
+}
+
+let activeSocket = null;
+
+async function requestPairCode(phoneNumber, onLoginSuccess) {
+  // පරණ session folder එක සම්පූර්ණයෙන්ම clear කිරීම
+  if (activeSocket) {
+    try { activeSocket.end(); } catch (e) {}
+    activeSocket = null;
+  }
+
+  if (fs.existsSync(sessionDir)) {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const { version } = await fetchLatestBaileysVersion();
+  const logger = pino({ level: 'silent' });
+
+  // WhatsApp Web protocol handshake එක හිර නොවී තියාගන්නා නිවැරදි configuration එක
+  activeSocket = makeWASocket({
+    version,
+    logger,
+    printQRInTerminal: false,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
+    },
+    // New WhatsApp Web Signature
+    browser: Browsers.windows('Desktop'),
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: true,
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 10000
+  });
+
+  activeSocket.ev.on('creds.update', async () => {
+    await saveCreds();
+    await backupCredentials();
+  });
+
+  activeSocket.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+    
+    if (connection === 'open') {
+      console.log('🎉 [DARK DINU] WHATSAPP DEVICE LINKED SUCCESSFULLY!');
+      await backupCredentials();
+      if (onLoginSuccess) onLoginSuccess(activeSocket);
+    } else if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log('[DARK DINU] Maintaining socket connection...');
+      }
+    }
+  });
+
+  // Numbers පමණක් ලබාගැනීම
+  let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+
+  // Handshake එක stabilize වීමට තත්පර 3ක් delay කර pairing code එක ඉල්ලීම
+  await delay(3000);
+  const code = await activeSocket.requestPairingCode(cleanNumber);
+  return code;
+}
+
+module.exports = {
+  requestPairCode,
+  restoreCredentials,
+  backupCredentials,
+  sessionDir,
+  SessionModel
 };
