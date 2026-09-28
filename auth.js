@@ -19,7 +19,6 @@ const SessionSchema = new mongoose.Schema({
 });
 const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// MongoDB එකෙන් Files ටික Local Folder එකට Restore කිරීම
 async function restoreSessionFromMongo() {
   try {
     const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
@@ -34,12 +33,11 @@ async function restoreSessionFromMongo() {
     }
     return true;
   } catch (err) {
-    console.error('Session restore error:', err);
+    console.error('[DATABASE] Session restore error:', err);
     return false;
   }
 }
 
-// Local Session Folder එක MongoDB එකට Sync කිරීම
 async function backupSessionToMongo() {
   try {
     if (!fs.existsSync(sessionPath)) return;
@@ -58,16 +56,16 @@ async function backupSessionToMongo() {
       { files: filesMap },
       { upsert: true, new: true }
     );
-    console.log('☁️ [DARK DINU] Session backed up to MongoDB successfully!');
+    console.log('⚡ [DARK DINU] Cloud Auth Matrix Synced to MongoDB!');
   } catch (err) {
-    console.error('Session backup error:', err);
+    console.error('[DATABASE] Session backup error:', err);
   }
 }
 
 let activePairSocket = null;
 
 async function requestPairCode(phoneNumber, onConnected) {
-  // පරණ session clear කරමු
+  // Clear any incomplete session state
   if (fs.existsSync(sessionPath)) {
     fs.rmSync(sessionPath, { recursive: true, force: true });
   }
@@ -85,33 +83,37 @@ async function requestPairCode(phoneNumber, onConnected) {
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     auth: state,
-    browser: ['Chrome (Linux)', 'Chrome', '122.0.0.0'],
+    browser: ['Ubuntu', 'Chrome', '120.0.6099.199'],
     syncFullHistory: false,
-    generateHighQualityLinkPreview: true
+    generateHighQualityLinkPreview: true,
+    connectTimeoutMs: 90000,
+    defaultQueryTimeoutMs: 90000,
+    keepAliveIntervalMs: 15000,
+    retryRequestDelayMs: 2500
   });
 
   activePairSocket.ev.on('creds.update', async () => {
     await saveCreds();
-    await backupSessionToMongo(); // Credentials update වෙන හැමවිටම MongoDB එකට backup වේ
+    await backupSessionToMongo();
   });
 
   activePairSocket.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
     if (connection === 'open') {
-      console.log('🎉 [DARK DINU] WhatsApp Connected & Verified!');
+      console.log('☠️ [DARK DINU CORE] AUTHENTICATION GRANTED! SYSTEM ONLINE.');
       await backupSessionToMongo();
       if (onConnected) onConnected(activePairSocket);
     } else if (connection === 'close') {
       const reason = lastDisconnect?.error?.output?.statusCode;
       if (reason !== DisconnectReason.loggedOut) {
-        console.log('[DARK DINU] Handshake in progress...');
+        console.log('[DARK DINU CORE] Secure handshake tunnel maintaining...');
       }
     }
   });
 
   let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-  await delay(3000);
+  await delay(3500);
   const code = await activePairSocket.requestPairingCode(cleanNumber);
   return code;
 }
