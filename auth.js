@@ -1,83 +1,36 @@
-const mongoose = require("mongoose");
-const { proto, BufferJSON, initAuthCreds } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const path = require('path');
+const fs = require('fs');
 
-const SessionSchema = new mongoose.Schema({
-  sessionId: { type: String, required: true, unique: true },
-  data: { type: String, required: true }
-});
+const sessionDir = path.join(__dirname, 'session');
 
-const SessionModel = mongoose.model("Session", SessionSchema);
-
-const useMongoDBAuthState = async (mongoUri, sessionId = "DARK-DINU-SESSION") => {
-  if (mongoose.connection.readyState === 0) {
-    await mongoose.connect(mongoUri);
+async function getPairingCode(phoneNumber, onPairCode) {
+  if (!fs.existsSync(sessionDir)) {
+    fs.mkdirSync(sessionDir, { recursive: true });
   }
 
-  const writeData = async (data, id) => {
-    const key = `${sessionId}-${id}`;
-    const value = JSON.stringify(data, BufferJSON.replacer);
-    await SessionModel.findOneAndUpdate(
-      { sessionId: key },
-      { data: value },
-      { upsert: true }
-    );
-  };
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const { version } = await fetchLatestBaileysVersion();
 
-  const readData = async (id) => {
-    try {
-      const key = `${sessionId}-${id}`;
-      const res = await SessionModel.findOne({ sessionId: key });
-      if (!res) return null;
-      return JSON.parse(res.data, BufferJSON.reviver);
-    } catch {
-      return null;
-    }
-  };
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    auth: state,
+    browser: Browsers.macOS('Desktop')
+  });
 
-  const removeData = async (id) => {
-    try {
-      const key = `${sessionId}-${id}`;
-      await SessionModel.deleteOne({ sessionId: key });
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  sock.ev.on('creds.update', saveCreds);
 
-  const creds = (await readData("creds")) || initAuthCreds();
+  if (!sock.authState.creds.registered) {
+    let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+    await delay(3000);
+    const code = await sock.requestPairingCode(cleanNumber);
+    if (onPairCode) onPairCode(code);
+  }
 
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const data = {};
-          await Promise.all(
-            ids.map(async (id) => {
-              let value = await readData(`${type}-${id}`);
-              if (type === "app-state-sync-key" && value) {
-                value = proto.Message.AppStateSyncKeyData.fromObject(value);
-              }
-              data[id] = value;
-            })
-          );
-          return data;
-        },
-        set: async (data) => {
-          const tasks = [];
-          for (const category in data) {
-            for (const id in data[category]) {
-              const value = data[category][id];
-              const file = `${category}-${id}`;
-              tasks.push(value ? writeData(value, file) : removeData(file));
-            }
-          }
-          await Promise.all(tasks);
-        }
-      }
-    },
-    saveCreds: () => writeData(creds, "creds")
-  };
-};
+  return sock;
+}
 
-module.exports = { useMongoDBAuthState };
-
+module.exports = { getPairingCode, sessionDir };
