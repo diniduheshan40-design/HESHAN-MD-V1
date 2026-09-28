@@ -7,14 +7,13 @@ const {
   useMultiFileAuthState, 
   fetchLatestBaileysVersion, 
   makeCacheableSignalKeyStore,
-  Browsers,
   DisconnectReason 
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 const sessionDir = path.join(__dirname, 'session');
 
-// MongoDB Session Schema
+// MongoDB Session Storage
 const SessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true },
   files: { type: Map, of: String }
@@ -69,16 +68,15 @@ async function backupCredentials() {
 let activeSocket = null;
 
 async function requestPairCode(phoneNumber, onLoginSuccess) {
-  // Clear any existing active socket connection
+  // Clean prior sockets
   if (activeSocket) {
     try { 
-      activeSocket.ws?.close();
       activeSocket.end(); 
     } catch (e) {}
     activeSocket = null;
   }
 
-  // Clear existing session directory to prevent corrupted state
+  // Clear existing session directory
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -96,13 +94,15 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Ubuntu Chrome signature prevents handshake drops
-    browser: Browsers.ubuntu('Chrome'),
+    // Real Chrome Desktop Signature (Render IP bypass)
+    browser: ['Chrome (Linux)', 'Chrome', '124.0.0.0'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
-    connectTimeoutMs: 60000,
+    generateHighQualityLinkPreview: false,
+    connectTimeoutMs: 120000,
     defaultQueryTimeoutMs: 0,
-    keepAliveIntervalMs: 10000
+    keepAliveIntervalMs: 25000,
+    retryRequestDelayMs: 2000
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -120,17 +120,17 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       if (statusCode === DisconnectReason.restartRequired) {
-        console.log('[DARK DINU] Stream restart required, maintaining connection...');
+        console.log('[DARK DINU] Stream restart required, holding connection...');
       } else if (statusCode === DisconnectReason.loggedOut) {
-        console.log('[DARK DINU] Session logged out.');
+        console.log('[DARK DINU] Logged out from WhatsApp.');
       }
     }
   });
 
   const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-  // Wait 4 seconds for socket to establish connection with WhatsApp servers
-  await delay(4000);
+  // Render network latency delay
+  await delay(2000);
 
   if (!activeSocket.authState.creds.registered) {
     const code = await activeSocket.requestPairingCode(cleanNumber);
