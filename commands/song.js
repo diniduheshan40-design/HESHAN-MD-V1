@@ -15,9 +15,9 @@ module.exports = {
         return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song kuweniye\``);
       }
 
-      await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-      // 1. YouTube Metadata Search
+      // 1. Metadata Search
       const search = await yts(query);
       const video = search.videos[0];
 
@@ -46,7 +46,7 @@ module.exports = {
  │ 📡 ᴜᴘʟᴏᴀᴅ : ${uploadYear}
  └───────────────────────
  > ⏳ *Uploading your audio...*
- > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴᴜ ᴛᴇᴄʜ 🩸`;
+ > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴ𝐔 ᴛᴇᴄʜ 🩸`;
 
       if (thumbnail) {
         await sock.sendMessage(from, {
@@ -59,21 +59,19 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
 
-      // 3. Audio Download via youtube-dl-exec with Android Client Bypass
+      // 3. Audio Download via youtube-dl-exec (iOS Client Bypass)
       const tempFilePath = path.join(__dirname, `audio_${Date.now()}.mp3`);
 
       await youtubedl(videoUrl, {
-        format: "bestaudio/best",
         extractAudio: true,
         audioFormat: "mp3",
         ffmpegLocation: ffmpegPath,
         output: tempFilePath,
         noWarnings: true,
         noCheckCertificates: true,
-        extractorArgs: "youtube:player_client=android",
-        addHeader: [
-          "user-agent:com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
-        ]
+        preferFreeFormats: true,
+        extractorArgs: "youtube:player_client=ios",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
       });
 
       // 4. Send Audio Message
@@ -94,7 +92,7 @@ module.exports = {
       }
 
     } catch (err) {
-      console.error("Song error:", err);
+      console.error("Song command error:", err);
       await reply(`❌ Error: ${err.message || "Failed to download song"}`);
     }
   }
