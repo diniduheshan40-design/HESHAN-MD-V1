@@ -8,6 +8,14 @@ process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
 });
 
+// Config File Loader (OpenRouter & Logos)
+let botConfig = {};
+try {
+  botConfig = require("./config");
+} catch (e) {
+  botConfig = {};
+}
+
 const express = require("express");
 const mongoose = require("mongoose");
 const fs = require("fs");
@@ -361,7 +369,9 @@ function initBot(sock) {
 
       if (global.aiAutoReply && !isCmd && !msg.key.fromMe) {
         try {
-          const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
+          const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || botConfig.OPENROUTER_API_KEY;
+          const AI_MODEL = botConfig.AI_MODEL || "deepseek/deepseek-chat:free";
+
           if (OPENROUTER_KEY) {
             await sock.sendPresenceUpdate("composing", from);
 
@@ -369,7 +379,7 @@ function initBot(sock) {
 `You are Dinidu Heshan (Dark Dinu), an 18-year-old tech and AI bot creator from Embilipitiya.
 Tone & Persona Rules:
 - You are chatting with a friend on WhatsApp.
-- Speak in natural, friendly Sinhala & Singlish (words like "මචං", "බ්‍රෝ", "බං", "හරි බං").
+- Speak in natural, friendly Sinhala & Singlish (use words like "මචං", "බ්‍රෝ", "බං", "හරි බං").
 - Be chill, supportive, authentic, and direct.
 - You love coding, WhatsApp bots, tech, and bikes.
 - Reply concisely like a real WhatsApp text (1-3 sentences max). Never sound like an AI assistant or robot.`;
@@ -377,7 +387,7 @@ Tone & Persona Rules:
             const response = await axios.post(
               "https://openrouter.ai/api/v1/chat/completions",
               {
-                model: "google/gemini-2.0-flash-exp:free",
+                model: AI_MODEL,
                 messages: [
                   { role: "system", content: systemPrompt },
                   { role: "user", content: cleanBody }
@@ -402,6 +412,8 @@ Tone & Persona Rules:
               await sock.sendMessage(from, { text: replyText }, { quoted: msg });
               return;
             }
+          } else {
+            console.warn("⚠️ OpenRouter Key එක හමු නොවීය.");
           }
         } catch (aiErr) {
           console.error("OpenRouter AI Error:", aiErr.response?.data || aiErr.message);
@@ -423,7 +435,8 @@ Tone & Persona Rules:
             isGroup,
             reply,
             DEVELOPER_NAME,
-            DEVELOPER_NUMBER
+            DEVELOPER_NUMBER,
+            botConfig
           });
         } catch (cmdErr) {
           console.error(`❌ Execution error in .${commandName}:`, cmdErr);
