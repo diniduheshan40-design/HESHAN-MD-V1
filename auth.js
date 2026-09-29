@@ -128,6 +128,15 @@ async function createSocket() {
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
 
+  // Safely clean up old socket before creating new one
+  if (activeSocket) {
+    try {
+      activeSocket.ev.removeAllListeners();
+      activeSocket.end(undefined);
+    } catch (e) {}
+    activeSocket = null;
+  }
+
   const sock = makeWASocket({
     version,
     logger,
@@ -140,7 +149,7 @@ async function createSocket() {
     syncFullHistory: false,
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 25000,
+    keepAliveIntervalMs: 15000,
     defaultQueryTimeoutMs: 60000
   });
 
@@ -179,15 +188,12 @@ async function createSocket() {
         reconnectTimer = setTimeout(async () => {
           console.log("🔄 Reconnecting WhatsApp Socket safely...");
           try {
-            if (activeSocket) {
-              try { activeSocket.end(undefined); } catch (e) {}
-            }
             await createSocket();
           } catch (e) {
             console.error("Auto-reconnect error:", e.message);
             isReconnecting = false;
           }
-        }, 3000);
+        }, 5000);
       }
     }
   });
@@ -204,11 +210,6 @@ async function createSocket() {
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
-  if (activeSocket) {
-    try { activeSocket.end(undefined); } catch (e) {}
-    activeSocket = null;
-  }
-
   deleteSessionDir();
   ensureSessionDir();
 
