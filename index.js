@@ -1,5 +1,13 @@
 require("dotenv").config();
 
+// Process crash වීම වැළැක්වීමේ Handlers
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Caught Exception:", err.message);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ Unhandled Rejection:", reason);
+});
+
 const express = require("express");
 const mongoose = require("mongoose");
 const fs = require("fs");
@@ -31,9 +39,12 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
-// In-Memory Global Session Storage for Song Format Selections
+// Global Interactive Sessions (Song & TikTok)
 if (!global.songSessions) {
   global.songSessions = new Map();
+}
+if (!global.tiktokSessions) {
+  global.tiktokSessions = new Map();
 }
 
 app.use(express.json());
@@ -197,7 +208,7 @@ function initBot(sock) {
     }
   });
 
-  // 2. Incoming Messages Listener (Prefix, Menu, & Song Format Select)
+  // 2. Incoming Messages Listener
   sock.ev.on("messages.upsert", async (chatUpdate) => {
     try {
       if (!chatUpdate.messages || chatUpdate.messages.length === 0) return;
@@ -220,12 +231,12 @@ function initBot(sock) {
         return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
       };
 
-      // =========================================================
-      // SONG SELECTION REPLY HANDLER (1: Audio, 2: Doc, 3: Voice)
-      // =========================================================
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
       const cleanBody = body.trim();
 
+      // =========================================================
+      // SONG SELECTION REPLY HANDLER (1: Audio, 2: Doc, 3: Voice)
+      // =========================================================
       if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
         const session = global.songSessions.get(quotedMsgId);
 
@@ -234,21 +245,18 @@ function initBot(sock) {
 
           try {
             if (cleanBody === "1") {
-              // 1. Normal Audio (MP3)
               await sock.sendMessage(from, {
                 audio: { url: session.url },
                 mimetype: "audio/mp4",
                 fileName: `${session.title}.mp3`
               }, { quoted: msg });
             } else if (cleanBody === "2") {
-              // 2. Document Format
               await sock.sendMessage(from, {
                 document: { url: session.url },
                 mimetype: "audio/mpeg",
                 fileName: `${session.title}.mp3`
               }, { quoted: msg });
             } else if (cleanBody === "3") {
-              // 3. Voice Note (PTT)
               await sock.sendMessage(from, {
                 audio: { url: session.url },
                 mimetype: "audio/ogg; codecs=opus",
@@ -266,7 +274,45 @@ function initBot(sock) {
         }
       }
 
-      // Prefix check (. / ! # /) හෝ Menu එක සඳහා වූ Number (1-6)
+      // =========================================================
+      // TIKTOK SELECTION REPLY HANDLER (1: Video, 2: Audio)
+      // =========================================================
+      if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
+        const ttSession = global.tiktokSessions.get(quotedMsgId);
+
+        if (["1", "2"].includes(cleanBody)) {
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+
+          try {
+            if (cleanBody === "1") {
+              await sock.sendMessage(from, {
+                video: { url: ttSession.videoUrl },
+                caption: `🎬 *${ttSession.title}*\n👤 *Creator:* ${ttSession.author}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
+                mimetype: "video/mp4"
+              }, { quoted: msg });
+            } else if (cleanBody === "2") {
+              if (!ttSession.audioUrl) {
+                return await reply("⚠️ මෙම වීඩියෝවට අදාළ Audio එක හමු නොවීය.");
+              }
+
+              await sock.sendMessage(from, {
+                audio: { url: ttSession.audioUrl },
+                mimetype: "audio/mp4",
+                fileName: `${ttSession.author}_sound.mp3`
+              }, { quoted: msg });
+            }
+
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            return;
+          } catch (ttSendErr) {
+            console.error("TikTok send error:", ttSendErr);
+            await reply("❌ TikTok මාධ්‍ය ගොනුව යැවීමේදී දෝෂයක් මතු විය.");
+            return;
+          }
+        }
+      }
+
+      // Prefix check (. / ! # /) හෝ Menu අංක (1-6)
       const prefixes = [".", "!", "#", "/"];
       let prefix = prefixes.find(p => body.startsWith(p));
       let commandName = "";
@@ -287,7 +333,6 @@ function initBot(sock) {
 
       console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from}`);
 
-      // Search registered commands
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
@@ -306,7 +351,6 @@ function initBot(sock) {
           await reply(`⚠️ Error executing *.${commandName}*:\n_${cmdErr.message}_`);
         }
       } else {
-        // Fallback for ping
         if (commandName === "ping" || commandName === "speed" || commandName === "p") {
           try {
             await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
