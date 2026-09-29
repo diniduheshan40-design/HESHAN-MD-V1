@@ -4,7 +4,7 @@ const axios = require("axios");
 module.exports = {
   name: "song",
   alias: ["play", "mp3", "audio"],
-  desc: "Direct YouTube Audio Downloader",
+  desc: "Download YouTube audio via Chamindu 10Gbps API",
   async execute(sock, msg, args, from, { reply, prefix }) {
     try {
       const query = args.join(" ").trim();
@@ -12,35 +12,45 @@ module.exports = {
         return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song kuweniye\``);
       }
 
-      await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-      // 1. YouTube Metadata Search
-      const search = await yts(query);
-      const video = search.videos[0];
+      // 1. YouTube Search හරහා Video URL එක සහ තොරතුරු ගැනීම
+      let videoUrl = query;
+      let title = "";
+      let duration = "";
+      let views = "";
+      let artist = "";
+      let uploadYear = "";
+      let thumbnail = "";
 
-      if (!video) {
-        return await reply("❌ සින්දුව සොයාගැනීමට නොහැකි විය. කරුණාකර වෙනත් නමක් ලබාදෙන්න.");
+      if (!query.startsWith("http://") && !query.startsWith("https://")) {
+        const search = await yts(query);
+        const video = search.videos[0];
+
+        if (!video) {
+          return await reply("❌ සින්දුව සොයාගැනීමට නොහැකි විය. කරුණාකර වෙනත් නමක් ලබාදෙන්න.");
+        }
+
+        videoUrl = video.url;
+        title = video.title;
+        duration = video.timestamp || "Unknown";
+        views = Number(video.views || 0).toLocaleString();
+        artist = video.author?.name || "Unknown Artist";
+        uploadYear = video.ago || "N/A";
+        thumbnail = video.thumbnail;
       }
 
-      const title = video.title;
-      const duration = video.timestamp || "Unknown";
-      const views = Number(video.views || 0).toLocaleString();
-      const artist = video.author?.name || "Unknown Artist";
-      const uploadYear = video.ago || "N/A";
-      const thumbnail = video.thumbnail;
-      const videoUrl = video.url;
-
-      // 2. ඔයාගේ Song Card Design එක
+      // 2. Card Design එක සකස් කර යැවීම
       const songCard = 
 `╔════════════════════════╗
    ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 ⚔️
 ╚════════════════════════╝
  ┌───────────────────────
- │ 🎵 ᴛɪᴛʟᴇ : ${title}
- │ ⏱️ ᴅᴜʀᴀᴛɪᴏɴ : ${duration}
- │ 👁️ ᴠɪᴇᴡs : ${views}
- │ 👤 ᴀʀᴛɪsᴛ : ${artist}
- │ 📡 ᴜᴘʟᴏᴀᴅ : ${uploadYear}
+ │ 🎵 ᴛɪᴛʟᴇ : ${title || "YouTube Audio"}
+ │ ⏱️ ᴅᴜʀᴀᴛɪᴏɴ : ${duration || "320kbps"}
+ │ 👁️ ᴠɪᴇᴡs : ${views || "N/A"}
+ │ 👤 ᴀʀᴛɪsᴛ : ${artist || "YouTube Artist"}
+ │ 📡 ᴜᴘʟᴏᴀᴅ : ${uploadYear || "N/A"}
  └───────────────────────
  > ⏳ *Uploading your audio...*
  > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴ𝐔 ᴛᴇᴄʜ 🩸`;
@@ -56,67 +66,36 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
 
-      // 3. YouTube Stream URL ලබා ගැනීම (Cobalt Core + Aggregator)
-      let audioStreamUrl = null;
+      // 3. Chamindu YouTube MP3 API Call
+      const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
+      const apiUrl = `https://api.chamindu.site/api/v1/youtube/mp3?url=${encodeURIComponent(videoUrl)}&quality=320kbps&api_key=${apiKey}`;
 
-      const instances = [
-        "https://api.cobalt.tools/api/json",
-        "https://cobalt.api.redstream.online/api/json",
-        "https://api.wuk.sh/api/json"
-      ];
+      const res = await axios.get(apiUrl, { timeout: 30000 });
 
-      for (const instance of instances) {
-        try {
-          const res = await axios.post(instance, {
-            url: videoUrl,
-            downloadMode: "audio",
-            audioFormat: "mp3"
-          }, {
-            headers: {
-              "Accept": "application/json",
-              "Content-Type": "application/json"
-            },
-            timeout: 10000
-          });
-
-          if (res.data?.url) {
-            audioStreamUrl = res.data.url;
-            break;
-          }
-        } catch (e) {}
+      if (!res.data?.status || !res.data?.data) {
+        throw new Error("API එකෙන් Audio Link එක ලබාගැනීමට නොහැකි විය.");
       }
 
-      // Backup Aggregator
-      if (!audioStreamUrl) {
-        try {
-          const fallback = await axios.get(`https://bk9.fun/download/youtube?url=${encodeURIComponent(videoUrl)}`, { timeout: 12000 });
-          if (fallback.data?.BK9?.BK8) {
-            audioStreamUrl = fallback.data.BK9.BK8;
-          }
-        } catch (e) {}
+      const songData = res.data.data;
+      const downloadUrl = songData.download_url || songData.direct_url;
+      const finalTitle = title || songData.title || "audio";
+
+      if (!downloadUrl) {
+        throw new Error("Direct Download Link එක හමු නොවීය.");
       }
 
-      if (!audioStreamUrl) {
-        return await reply("❌ Audio සේවාව කාර්යබහුලයි. සුළු මොහොතකින් නැවත උත්සාහ කරන්න.");
-      }
-
-      // 4. WhatsApp එකට Audio Message එක Buffer එකක් ලෙස ලබාදී යැවීම
-      const audioRes = await axios.get(audioStreamUrl, {
-        responseType: "arraybuffer",
-        timeout: 30000
-      });
-
+      // 4. WhatsApp වෙත Direct CDN එකෙන් Audio එක යැවීම
       await sock.sendMessage(from, {
-        audio: Buffer.from(audioRes.data),
+        audio: { url: downloadUrl },
         mimetype: "audio/mp4",
-        fileName: `${title}.mp3`
+        fileName: `${finalTitle}.mp3`
       }, { quoted: msg });
 
       await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
     } catch (err) {
-      console.error("Song command error:", err.message);
-      await reply(`❌ Error: ${err.message || "Failed to download song"}`);
+      console.error("Chamindu API Song Error:", err.message);
+      await reply(`❌ සින්දුව බාගත කිරීම අසාර්ථක විය: ${err.message || "Error"}`);
     }
   }
 };
