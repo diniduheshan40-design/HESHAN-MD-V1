@@ -4,9 +4,9 @@ module.exports = {
   name: "menu",
   alias: ["help", "list", "panel", "1", "2", "3", "4", "5", "6"],
   desc: "Interactive category menu",
-  async execute(sock, msg, args, from, { sender, DEVELOPER_NAME, prefix }) {
+  async execute(sock, msg, args, from, { sender, DEVELOPER_NAME, prefix, body }) {
     try {
-      await sock.sendMessage(from, { react: { text: "📃", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "📜", key: msg.key } });
 
       const rawUser = sender ? sender.split("@")[0].replace(/[^0-9]/g, "") : "User";
       const uptimeSec = Math.floor(process.uptime());
@@ -15,7 +15,6 @@ module.exports = {
       const seconds = uptimeSec % 60;
       const runtimeStr = `${hours}h ${minutes}m ${seconds}s`;
 
-      // Header Banner
       const header = 
 `╔════════════════════════╗
    ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐕𝟏 ⚔️
@@ -27,8 +26,12 @@ module.exports = {
  │ 📡 ᴍᴏᴅᴇ : Public
  └───────────────────────\n`;
 
-      // Selection check (args[0] හෝ alias හරහා අංකය අඳුනගැනීම)
-      const choice = (args[0] || "").trim() || (["1", "2", "3", "4", "5", "6"].includes(msg.body?.slice(1)) ? msg.body?.slice(1) : "");
+      // Number detect maaduvudu (.menu 1, .1, athava bari 1)
+      let choice = (args[0] || "").trim();
+      const cleanBody = (body || "").trim();
+      if (!choice && ["1", "2", "3", "4", "5", "6"].includes(cleanBody.replace(/^[.!#/]/, ""))) {
+        choice = cleanBody.replace(/^[.!#/]/, "");
+      }
 
       let menuBody = "";
 
@@ -95,7 +98,7 @@ module.exports = {
         menuBody = 
 `┌──『 🎮 06. FUN & GAMES 』───
 │
-│ ✦ ${prefix}joke       - Sinhala / English jokes
+│ ✦ ${prefix}joke       - Funny jokes
 │ ✦ ${prefix}quote      - Motivational quotes
 │ ✦ ${prefix}fact       - Random facts
 │
@@ -103,7 +106,6 @@ module.exports = {
 > Type ${prefix}menu to go back.`;
 
       } else {
-        // Main Category Overview
         menuBody = 
 `┌──『 📜 𝐌𝐄𝐍𝐔 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒 』───
 │
@@ -121,9 +123,8 @@ module.exports = {
       }
 
       const finalMessage = header + menuBody;
-
-      // Logo Image එක සමඟ යැවීම (Image fail වුවහොත් text fallback)
       const logo = config.getRandomLogo();
+
       if (logo && logo.startsWith("http")) {
         try {
           await sock.sendMessage(from, {
@@ -132,14 +133,14 @@ module.exports = {
           }, { quoted: msg });
           return;
         } catch (imgErr) {
-          console.error("Menu image error, sending text:", imgErr.message);
+          console.error("Image error:", imgErr.message);
         }
       }
 
       await sock.sendMessage(from, { text: finalMessage }, { quoted: msg });
 
     } catch (err) {
-      console.error("Menu Execution Error:", err);
+      console.error("Menu Error:", err);
       await sock.sendMessage(from, { text: "⚠️ Menu display failed." }, { quoted: msg });
     }
   }
