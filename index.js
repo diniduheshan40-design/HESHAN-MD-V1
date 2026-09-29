@@ -23,7 +23,7 @@ const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://diniduheshan2007_db_user:Heshan2007@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
 
-const commandsDir = path.join(__dirname, "commands");
+const commandsDir = path.resolve(__dirname, "commands");
 if (!fs.existsSync(commandsDir)) {
   fs.mkdirSync(commandsDir, { recursive: true });
 }
@@ -45,44 +45,68 @@ const MetaSchema = new mongoose.Schema({
 const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
 
 /* =========================================================
-   DYNAMIC COMMAND LOADER (Safe Linux & Live Reload)
+   ROBUST COMMAND LOADER & CACHE SYSTEM
 ========================================================= */
 
-function getCommand(cmdName) {
+const commands = new Map();
+const aliases = new Map();
+
+function loadCommands() {
+  commands.clear();
+  aliases.clear();
+
   try {
-    if (!fs.existsSync(commandsDir)) return null;
+    if (!fs.existsSync(commandsDir)) {
+      fs.mkdirSync(commandsDir, { recursive: true });
+    }
+
     const files = fs.readdirSync(commandsDir).filter(f => f.endsWith(".js"));
+    console.log(`\x1b[36m%s\x1b[0m`, `📂 [LOADER] Scanning folder: Found ${files.length} command files.`);
 
     for (const file of files) {
       const fullPath = path.join(commandsDir, file);
       try {
         delete require.cache[require.resolve(fullPath)];
-        const cmdObj = require(fullPath);
+        const cmd = require(fullPath);
 
-        if (cmdObj && cmdObj.name) {
-          const isNameMatch = cmdObj.name.toLowerCase() === cmdName;
-          const isAliasMatch = Array.isArray(cmdObj.alias) && cmdObj.alias.map(a => a.toLowerCase()).includes(cmdName);
-          if (isNameMatch || isAliasMatch) return cmdObj;
+        if (cmd && cmd.name) {
+          const name = cmd.name.toLowerCase().trim();
+          commands.set(name, cmd);
+
+          if (Array.isArray(cmd.alias)) {
+            cmd.alias.forEach(a => aliases.set(a.toLowerCase().trim(), name));
+          }
+          console.log(`\x1b[32m%s\x1b[0m`, `   ├ ⚡ Registered: .${name}`);
+        } else {
+          console.log(`\x1b[33m%s\x1b[0m`, `   ⚠️ Skipped ${file}: Missing 'name' property.`);
         }
       } catch (err) {
-        console.error(`❌ Error loading file ${file}:`, err.message);
+        console.error(`\x1b[31m%s\x1b[0m`, `   ❌ Error reading ${file}: ${err.message}`);
       }
     }
-  } catch (e) {
-    console.error("Commands read error:", e.message);
+  } catch (err) {
+    console.error("❌ Loader directory error:", err.message);
   }
+}
+
+// Initial Load
+loadCommands();
+
+function getCommand(cmdName) {
+  const name = cmdName.toLowerCase().trim();
+  if (commands.has(name)) return commands.get(name);
+  if (aliases.has(name)) return commands.get(aliases.get(name));
   return null;
 }
 
 /* =========================================================
-   HELPER: EXTRACT TEXT SAFELY
+   SAFE MESSAGE TEXT PARSER
 ========================================================= */
 
 function extractMessageBody(msg) {
   if (!msg || !msg.message) return "";
   let m = msg.message;
 
-  // Unwrap protocols and wrappers
   if (m.ephemeralMessage) m = m.ephemeralMessage.message;
   if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
   if (m.viewOnceMessage) m = m.viewOnceMessage.message;
@@ -109,7 +133,7 @@ function initBot(sock) {
   if (!sock || !sock.ev) return;
   activeSocket = sock;
 
-  // 1. Connection Event
+  // 1. Connection Event: User & Developer Alerts
   sock.ev.on("connection.update", async (update) => {
     const { connection } = update;
 
@@ -168,7 +192,7 @@ function initBot(sock) {
     }
   });
 
-  // 2. Incoming Messages Listener (Guaranteed Execution)
+  // 2. Incoming Messages Listener
   sock.ev.on("messages.upsert", async (chatUpdate) => {
     try {
       if (!chatUpdate.messages || chatUpdate.messages.length === 0) return;
@@ -178,10 +202,14 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (!from || from === "status@broadcast") return;
 
+      const isGroup = from.endsWith("@g.us");
+      const botNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
+      const sender = msg.key.fromMe 
+        ? `${botNumber}@s.whatsapp.net` 
+        : (isGroup ? msg.key.participant : from);
+
       const body = extractMessageBody(msg);
       if (!body) return;
-
-      console.log(`📩 [CHAT]: From: ${from} | Text: "${body}"`);
 
       // Prefix check (. / ! # /)
       const prefixes = [".", "!", "#", "/"];
@@ -192,48 +220,54 @@ function initBot(sock) {
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: Running ${commandName}...`);
+      console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from}`);
 
       // Universal Reply Helper
       const reply = async (text) => {
         return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
       };
 
-      // 🔴 FAIL-SAFE INTERNAL PING (commands folder එකේ ping.js නැතත් හෝ fail වුණත් මේක අනිවාර්යයෙන්ම දුවනවා)
-      if (commandName === "ping" || commandName === "p" || commandName === "speed") {
-        try {
-          await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
-          const start = Date.now();
-          const latency = Date.now() - start;
-          const sent = await sock.sendMessage(from, { 
-            text: `⚡ *Pong!* \n⏱️ Speed: *${latency}ms*\n🤖 *DARK DINU MD Online!*` 
-          }, { quoted: msg });
-
-          if (sent?.key) {
-            await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
-          }
-          return;
-        } catch (pingErr) {
-          console.error("Internal ping error:", pingErr);
-        }
-      }
-
-      // External Commands Execution
+      // Search registered commands
       const targetCommand = getCommand(commandName);
+
       if (targetCommand && typeof targetCommand.execute === "function") {
-        await targetCommand.execute(sock, msg, args, from, {
-          body,
-          prefix,
-          reply,
-          DEVELOPER_NAME,
-          DEVELOPER_NUMBER
-        });
+        try {
+          await targetCommand.execute(sock, msg, args, from, {
+            body,
+            prefix,
+            sender,
+            isGroup,
+            reply,
+            DEVELOPER_NAME,
+            DEVELOPER_NUMBER
+          });
+        } catch (cmdErr) {
+          console.error(`❌ Execution error in .${commandName}:`, cmdErr);
+          await reply(`⚠️ Error executing *.${commandName}*:\n_${cmdErr.message}_`);
+        }
       } else {
-        console.log(`⚠️ Command not found: ${commandName}`);
+        // Fallback for ping if file failed to load
+        if (commandName === "ping" || commandName === "speed" || commandName === "p") {
+          try {
+            await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
+            const start = Date.now();
+            const latency = Date.now() - start;
+            const sent = await sock.sendMessage(from, { 
+              text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*\n_(Internal Fallback)_` 
+            }, { quoted: msg });
+
+            if (sent?.key) {
+              await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
+            }
+            return;
+          } catch (e) {}
+        }
+
+        console.log(`⚠️ Command not registered: .${commandName}`);
       }
 
     } catch (e) {
-      console.error("❌ Message Upsert Error:", e);
+      console.error("❌ messages.upsert Error:", e);
     }
   });
 }
@@ -347,6 +381,7 @@ app.get("/health", (req, res) => {
     status: "online",
     bot: "DARK DINU MD",
     developer: DEVELOPER_NAME,
+    loaded_commands: Array.from(commands.keys()),
     mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     whatsapp: activeSocket ? "active" : "not-connected"
   });
