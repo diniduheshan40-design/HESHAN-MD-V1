@@ -4,7 +4,7 @@ const {
   generateWAMessageFromContent
 } = require("@whiskeysockets/baileys");
 
-// Stream එක Buffer එකක් කරගැනීම
+// Stream එක Buffer එකක් කර ගැනීම
 async function getMediaBuffer(mediaMessage, type) {
   const stream = await downloadContentFromMessage(mediaMessage, type);
   let buffer = Buffer.from([]);
@@ -17,7 +17,7 @@ async function getMediaBuffer(mediaMessage, type) {
 module.exports = {
   name: "status",
   alias: ["upstatus", "story", "ups"],
-  desc: "Upload image, video or text directly to WhatsApp Status via relayMessage",
+  desc: "Force upload image, video or text to WhatsApp Status",
   async execute(sock, msg, args, from, context) {
     const { reply, isOwner, prefix } = context;
 
@@ -32,44 +32,53 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-      // 1. Audience / Recipients සැකසීම (Status එක share විය යුතු JID List එක)
-      let recipients = [];
+      // 1. WhatsApp Status Recipients (Recipients ලැයිස්තුව හරියටම සකස් කිරීම)
+      // Bot ගේ JID එක කිසිසේත්ම statusJidList එකට නොදැමිය යුතුය!
+      let statusJidList = [];
+
       try {
         if (sock.chats) {
-          recipients = Object.keys(sock.chats).filter(
-            (j) => j.endsWith("@s.whatsapp.net") && !j.includes("status")
+          statusJidList = Object.keys(sock.chats).filter(
+            (id) => id.endsWith("@s.whatsapp.net") && !id.includes("status")
           );
         }
       } catch (e) {}
 
-      // Contacts list එකක් නැත්නම් owner ගේ සහ bot ගේ JID එක එකතු කිරීම
-      const botNumber = (sock.user?.id || "").split(":")[0] + "@s.whatsapp.net";
-      if (!recipients.includes(from)) recipients.push(from);
-      if (!recipients.includes(botNumber)) recipients.push(botNumber);
+      // Recipients ලැයිස්තුවට command එක ගහපු owner ගේ JID එක එකතු කිරීම
+      const cleanFrom = from.endsWith("@s.whatsapp.net") ? from : null;
+      if (cleanFrom && !statusJidList.includes(cleanFrom)) {
+        statusJidList.push(cleanFrom);
+      }
 
-      // Status එක upload කිරීම සඳහා Baileys relayMessage runner එක
-      async function uploadToStatus(contentNode) {
-        const statusMsg = generateWAMessageFromContent(
+      // අවම වශයෙන් එක් recipient කෙනෙක්වත් අනිවාර්යයෙන්ම තිබිය යුතුය
+      if (statusJidList.length === 0) {
+        statusJidList = [from];
+      }
+
+      // 2. Status Generator & Relayer Function
+      async function sendStatus(messageContent) {
+        const waMsg = generateWAMessageFromContent(
           statusJid,
-          contentNode,
+          messageContent,
           {
-            userJid: botNumber
+            userJid: sock.user.id
           }
         );
 
-        await sock.relayMessage(statusJid, statusMsg.message, {
-          messageId: statusMsg.key.id,
-          statusJidList: recipients
+        await sock.relayMessage(statusJid, waMsg.message, {
+          messageId: waMsg.key.id,
+          statusJidList: statusJidList,
+          broadcast: true
         });
       }
 
-      // =========================================================
-      // 1. IMAGE STATUS
-      // =========================================================
+      // ==========================================
+      // A. IMAGE STATUS
+      // ==========================================
       if (quoted?.imageMessage) {
         const buffer = await getMediaBuffer(quoted.imageMessage, "image");
 
-        const mediaContent = await generateWAMessageContent(
+        const mediaMsg = await generateWAMessageContent(
           {
             image: buffer,
             caption: captionText || quoted.imageMessage.caption || ""
@@ -77,19 +86,19 @@ module.exports = {
           { upload: sock.waUploadToServer }
         );
 
-        await uploadToStatus(mediaContent);
+        await sendStatus(mediaMsg);
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Image එක සාර්ථකව WhatsApp Status එකට වැටුණා! (Bot ගේ WhatsApp එකේ My Status බලන්න)");
+        return await reply("✅ Image එක 100% සාර්ථකව WhatsApp Status එකට වැටුණා! (Check My Status)");
       }
 
-      // =========================================================
-      // 2. VIDEO STATUS
-      // =========================================================
+      // ==========================================
+      // B. VIDEO STATUS
+      // ==========================================
       if (quoted?.videoMessage) {
         const buffer = await getMediaBuffer(quoted.videoMessage, "video");
 
-        const mediaContent = await generateWAMessageContent(
+        const mediaMsg = await generateWAMessageContent(
           {
             video: buffer,
             caption: captionText || quoted.videoMessage.caption || ""
@@ -97,29 +106,29 @@ module.exports = {
           { upload: sock.waUploadToServer }
         );
 
-        await uploadToStatus(mediaContent);
+        await sendStatus(mediaMsg);
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Video එක සාර්ථකව WhatsApp Status එකට වැටුණා! (Bot ගේ WhatsApp එකේ My Status බලන්න)");
+        return await reply("✅ Video එක 100% සාර්ථකව WhatsApp Status එකට වැටුණා! (Check My Status)");
       }
 
-      // =========================================================
-      // 3. TEXT STATUS
-      // =========================================================
+      // ==========================================
+      // C. TEXT STATUS
+      // ==========================================
       if (captionText) {
-        const textContent = {
+        const textMsg = {
           extendedTextMessage: {
             text: captionText,
             textArgb: 0xffffffff,
-            backgroundArgb: 0xff000000,
+            backgroundArgb: 0xff7b1fa2, // Purple Background
             font: 1
           }
         };
 
-        await uploadToStatus(textContent);
+        await sendStatus(textMsg);
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Text එක සාර්ථකව WhatsApp Status එකට වැටුණා! (Bot ගේ WhatsApp එකේ My Status බලන්න)");
+        return await reply("✅ Text එක 100% සාර්ථකව WhatsApp Status එකට වැටුණා! (Check My Status)");
       }
 
       return await reply(
@@ -129,8 +138,8 @@ module.exports = {
       );
 
     } catch (err) {
-      console.error("Status upload error:", err);
-      await reply(`❌ Status දෝෂය: ${err.message || "Failed to relay status"}`);
+      console.error("Status Fatal Error:", err);
+      await reply(`❌ Error: ${err.message || "Failed to push status"}`);
     }
   }
 };
