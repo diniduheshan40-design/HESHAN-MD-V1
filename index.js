@@ -51,8 +51,8 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
-// Global AI Auto-Reply State (Default: OFF)
-global.aiAutoReply = false;
+// Global AI Auto-Reply State (Default: ON)
+global.aiAutoReply = true;
 
 // Global Interactive Sessions (Song & TikTok)
 if (!global.songSessions) {
@@ -187,6 +187,7 @@ function initBot(sock) {
 │ 👤 *USER:* +${rawUser}
 │ 👑 *DEVELOPER:* ${DEVELOPER_NAME}
 │ 📞 *DEV CONTACT:* +${DEVELOPER_NUMBER}
+│ 🤖 *AI PERSONA:* ACTIVE 🟢
 │ 🌐 *ENGINE:* Baileys Multi-Device
 │
 ╰───────────────────────◆
@@ -250,7 +251,7 @@ function initBot(sock) {
       const cleanBody = body.trim();
 
       // =========================================================
-      // DEVELOPER / OWNER PERMISSION CHECK (Supports Phone & LID)
+      // DEVELOPER / OWNER PERMISSION CHECK
       // =========================================================
       const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
       const isOwner = Boolean(
@@ -262,7 +263,7 @@ function initBot(sock) {
       );
 
       // =========================================================
-      // SONG SELECTION REPLY HANDLER (1: Audio, 2: Doc, 3: Voice)
+      // SONG SELECTION REPLY HANDLER (Quoted reply එකක් නම් පමණක් වැඩ කරයි)
       // =========================================================
       if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
         const session = global.songSessions.get(quotedMsgId);
@@ -302,7 +303,7 @@ function initBot(sock) {
       }
 
       // =========================================================
-      // TIKTOK SELECTION REPLY HANDLER (1: Video, 2: Audio)
+      // TIKTOK SELECTION REPLY HANDLER (Quoted reply එකක් නම් පමණක් වැඩ කරයි)
       // =========================================================
       if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
         const ttSession = global.tiktokSessions.get(quotedMsgId);
@@ -339,17 +340,14 @@ function initBot(sock) {
         }
       }
 
-      // Prefix check (. / ! # /) හෝ Menu අංක (1-6)
+      // Prefix check (. / ! # /)
       const prefixes = [".", "!", "#", "/"];
-      let prefix = prefixes.find(p => body.startsWith(p));
+      const prefix = prefixes.find(p => body.startsWith(p));
       let commandName = "";
       let args = [];
 
-      if (!prefix && ["1", "2", "3", "4", "5", "6"].includes(cleanBody)) {
-        prefix = ".";
-        commandName = "menu";
-        args = [cleanBody];
-      } else if (prefix) {
+      // නිකම්ම 1,2,3 දැම්මම menu open වෙන එක ඉවත් කර, prefix එකක් සහිත නම් පමණක් command හඳුනාගනී
+      if (prefix) {
         args = body.slice(prefix.length).trim().split(/ +/);
         commandName = args.shift().toLowerCase();
       }
@@ -377,25 +375,25 @@ function initBot(sock) {
       // =========================================================
       // HESHAN AI AUTO-REPLY VIA OPENROUTER (DIGITAL PERSONA)
       // =========================================================
-      const isCmd = Boolean(prefix) || ["1", "2", "3", "4", "5", "6"].includes(cleanBody);
+      const isCmd = Boolean(prefix);
 
-      if (global.aiAutoReply && !isCmd && !msg.key.fromMe) {
+      if (global.aiAutoReply && !isCmd && cleanBody.length > 0) {
         try {
           const OPENROUTER_KEY = 
             process.env.OPENROUTER_API_KEY || 
             botConfig.OPENROUTER_API_KEY || 
             "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";
 
-          // Free සහ Fast Response සඳහා Gemini 2.0 Flash හෝ Deepseek fallback
           const AI_MODEL = "google/gemini-2.0-flash-exp:free";
 
           if (OPENROUTER_KEY) {
+            console.log(`🤖 [AI INCOMING]: ${cleanBody}`);
             await sock.sendPresenceUpdate("composing", from);
 
             const systemPrompt = 
 `You are Dinidu Heshan (Dark Dinu), an 18-year-old tech and AI bot creator from Embilipitiya.
 Tone & Persona Rules:
-- You are chatting with a friend on WhatsApp.
+- You are chatting with a close friend on WhatsApp.
 - Speak in natural, friendly Sinhala & Singlish (use words like "මචං", "බ්‍රෝ", "බං", "හරි බං").
 - Be chill, supportive, authentic, and direct.
 - You love coding, WhatsApp bots, tech, and bikes.
