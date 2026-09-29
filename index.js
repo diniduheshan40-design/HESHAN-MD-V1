@@ -53,7 +53,7 @@ function getCommand(cmdName) {
     const files = fs.readdirSync(commandsDir).filter(f => f.endsWith(".js"));
     for (const file of files) {
       const fullPath = path.join(commandsDir, file);
-      delete require.cache[require.resolve(fullPath)]; // Instant Live Reload
+      delete require.cache[require.resolve(fullPath)]; // Live Auto-Reload
       const cmdObj = require(fullPath);
 
       if (cmdObj && cmdObj.name) {
@@ -91,7 +91,6 @@ function initBot(sock) {
           const userJid = `${rawUser}@s.whatsapp.net`;
           const devJid = `${DEVELOPER_NUMBER}@s.whatsapp.net`;
 
-          // User ට යන Official Connecting Card එක
           const userMsg = 
 `╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐌𝐃 』───◆
 │
@@ -108,7 +107,6 @@ function initBot(sock) {
           await sock.sendMessage(userJid, { text: userMsg });
           console.log(`📨 [WELCOME] Message sent to User: +${rawUser}`);
 
-          // Developer (DINIDU HESHAN) ට පළවෙනි පාර පමණක් යන Alert එක
           const checkMeta = await BotMeta.findOne({ key: "first_time_paired" });
           if (!checkMeta || !checkMeta.value) {
             const devMsg = 
@@ -137,48 +135,69 @@ function initBot(sock) {
     }
   });
 
-  // 2. Incoming Messages Listener (Self Chat, DM & Groups)
-  sock.ev.on("messages.upsert", async ({ messages }) => {
+  // 2. Incoming Messages Listener (Fully Fixed for Self-chat, DMs & Groups)
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
     try {
       const msg = messages[0];
       if (!msg || !msg.message) return;
 
       const from = msg.key.remoteJid;
-      if (from === "status@broadcast") return;
+      if (!from || from === "status@broadcast") return;
 
-      // Extract message content
-      const messageContent = 
-        msg.message.ephemeralMessage?.message ||
-        msg.message.viewOnceMessageV2?.message ||
-        msg.message.viewOnceMessageV2Extension?.message ||
-        msg.message.viewOnceMessage?.message ||
-        msg.message.documentWithCaptionMessage?.message ||
-        msg.message;
+      const isGroup = from.endsWith("@g.us");
+      const botNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
+      const sender = msg.key.fromMe 
+        ? `${botNumber}@s.whatsapp.net` 
+        : (isGroup ? msg.key.participant : from);
 
+      // Deep unwrap message layers (handles ephemeral, viewOnce, edits)
+      let m = msg.message;
+      if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+      if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+      if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+      if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+
+      // Extract text content reliably
       const body = (
-        messageContent.conversation ||
-        messageContent.extendedTextMessage?.text ||
-        messageContent.imageMessage?.caption ||
-        messageContent.videoMessage?.caption ||
+        m.conversation ||
+        m.extendedTextMessage?.text ||
+        m.imageMessage?.caption ||
+        m.videoMessage?.caption ||
+        m.buttonsResponseMessage?.selectedButtonId ||
+        m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        m.templateButtonReplyMessage?.selectedId ||
         ""
       ).trim();
 
       if (!body) return;
 
-      // Prefix check (. / ! # /)
+      // Check prefixes (. , ! , # , /)
       const prefixes = [".", "!", "#", "/"];
       const prefix = prefixes.find(p => body.startsWith(p));
       if (!prefix) return;
 
       const args = body.slice(prefix.length).trim().split(/ +/);
       const commandName = args.shift().toLowerCase();
+      if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: ${commandName} from ${from}`);
+      console.log(`⚡ [EXECUTE]: ${commandName} | From: ${from}`);
 
-      // Dynamic Command Execution
+      // Universal reply helper
+      const reply = async (text) => {
+        return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
+      };
+
+      // Search & execute command
       const targetCommand = getCommand(commandName);
       if (targetCommand && typeof targetCommand.execute === "function") {
-        await targetCommand.execute(sock, msg, args, from);
+        await targetCommand.execute(sock, msg, args, from, {
+          body,
+          prefix,
+          sender,
+          isGroup,
+          reply,
+          DEVELOPER_NUMBER
+        });
       } else {
         console.log(`⚠️ Command not found: ${commandName}`);
       }
