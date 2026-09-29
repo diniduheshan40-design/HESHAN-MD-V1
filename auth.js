@@ -18,6 +18,7 @@ const sessionDir = path.join(__dirname, "session");
 
 let activeSocket = null;
 let reconnectTimer = null;
+let isReconnecting = false;
 let onSocketCreatedCallback = null;
 
 /* =========================================================
@@ -84,40 +85,47 @@ async function restoreCredentials() {
 }
 
 /* =========================================================
-   BACKUP ALL CREDENTIALS TO MONGODB
+   BACKUP ALL CREDENTIALS TO MONGODB (DEBOUNCED)
 ========================================================= */
 
+let backupTimeout = null;
 async function backupAllCredentials() {
-  try {
-    ensureSessionDir();
-    const files = {};
-    const allFiles = fs.readdirSync(sessionDir);
+  if (backupTimeout) clearTimeout(backupTimeout);
 
-    for (const fileName of allFiles) {
-      const filePath = path.join(sessionDir, fileName);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const safeKey = fileName.replace(/\./g, "___dot___");
-        files[safeKey] = fs.readFileSync(filePath, "utf8");
+  backupTimeout = setTimeout(async () => {
+    try {
+      ensureSessionDir();
+      const files = {};
+      const allFiles = fs.readdirSync(sessionDir);
+
+      for (const fileName of allFiles) {
+        const filePath = path.join(sessionDir, fileName);
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          const safeKey = fileName.replace(/\./g, "___dot___");
+          files[safeKey] = fs.readFileSync(filePath, "utf8");
+        }
       }
+
+      if (Object.keys(files).length === 0) return;
+
+      await SessionModel.findOneAndUpdate(
+        { sessionId: "dark_dinu_session" },
+        { $set: { files } },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.error("❌ Backup error:", err.message);
     }
-
-    if (Object.keys(files).length === 0) return;
-
-    await SessionModel.findOneAndUpdate(
-      { sessionId: "dark_dinu_session" },
-      { $set: { files } },
-      { upsert: true, new: true }
-    );
-  } catch (err) {
-    console.error("❌ Backup error:", err.message);
-  }
+  }, 2000);
 }
 
 /* =========================================================
-   CREATE SOCKET
+   CREATE SOCKET ENGINE
 ========================================================= */
 
-async function createSocket(state, saveCreds) {
+async function createSocket() {
+  ensureSessionDir();
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
@@ -127,12 +135,12 @@ async function createSocket(state, saveCreds) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.macOS("Chrome"),
+    browser: Browsers.ubuntu("Chrome"),
     printQRInTerminal: false,
     syncFullHistory: false,
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000,
+    keepAliveIntervalMs: 25000,
     defaultQueryTimeoutMs: 60000
   });
 
@@ -149,6 +157,7 @@ async function createSocket(state, saveCreds) {
     const { connection, lastDisconnect } = update;
 
     if (connection === "open") {
+      isReconnecting = false;
       await backupAllCredentials();
     }
 
@@ -158,22 +167,27 @@ async function createSocket(state, saveCreds) {
 
       if (statusCode === DisconnectReason.loggedOut) {
         console.log("🚪 Logged out from WhatsApp.");
-        await SessionModel.deleteOne({ sessionId: "dark_dinu_session" }).catch(()=>{});
+        await SessionModel.deleteOne({ sessionId: "dark_dinu_session" }).catch(() => {});
         deleteSessionDir();
         return;
       }
 
-      if (!reconnectTimer) {
+      if (!isReconnecting) {
+        isReconnecting = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+
         reconnectTimer = setTimeout(async () => {
-          reconnectTimer = null;
-          console.log("🔄 Reconnecting automatically...");
+          console.log("🔄 Reconnecting WhatsApp Socket safely...");
           try {
-            const newSock = await createSocket(state, saveCreds);
-            if (onSocketCreatedCallback) onSocketCreatedCallback(newSock);
+            if (activeSocket) {
+              try { activeSocket.end(undefined); } catch (e) {}
+            }
+            await createSocket();
           } catch (e) {
             console.error("Auto-reconnect error:", e.message);
+            isReconnecting = false;
           }
-        }, 4000);
+        }, 3000);
       }
     }
   });
@@ -198,10 +212,9 @@ async function requestPairCode(phoneNumber) {
   deleteSessionDir();
   ensureSessionDir();
 
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-  const sock = await createSocket(state, saveCreds);
+  const sock = await createSocket();
 
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise((r) => setTimeout(r, 3000));
   const cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
   const code = await sock.requestPairingCode(cleanNumber);
 
@@ -214,12 +227,10 @@ async function requestPairCode(phoneNumber) {
 
 async function startSavedSocket() {
   ensureSessionDir();
-
   const credsFile = path.join(sessionDir, "creds.json");
   if (!fs.existsSync(credsFile)) return null;
 
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-  return await createSocket(state, saveCreds);
+  return await createSocket();
 }
 
 module.exports = {
