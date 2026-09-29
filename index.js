@@ -192,7 +192,7 @@ function initBot(sock) {
     }
   });
 
-  // 2. Incoming Messages Listener
+  // 2. Incoming Messages Listener (Prefix + Number Direct Reply Support)
   sock.ev.on("messages.upsert", async (chatUpdate) => {
     try {
       if (!chatUpdate.messages || chatUpdate.messages.length === 0) return;
@@ -211,13 +211,23 @@ function initBot(sock) {
       const body = extractMessageBody(msg);
       if (!body) return;
 
-      // Prefix check (. / ! # /)
+      // Prefix check (. / ! # /) athava bari number (1-6) select maduvudu
       const prefixes = [".", "!", "#", "/"];
-      const prefix = prefixes.find(p => body.startsWith(p));
-      if (!prefix) return;
+      let prefix = prefixes.find(p => body.startsWith(p));
+      let commandName = "";
+      let args = [];
 
-      const args = body.slice(prefix.length).trim().split(/ +/);
-      const commandName = args.shift().toLowerCase();
+      if (!prefix && ["1", "2", "3", "4", "5", "6"].includes(body.trim())) {
+        prefix = ".";
+        commandName = "menu";
+        args = [body.trim()];
+      } else if (prefix) {
+        args = body.slice(prefix.length).trim().split(/ +/);
+        commandName = args.shift().toLowerCase();
+      } else {
+        return;
+      }
+
       if (!commandName) return;
 
       console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from}`);
@@ -246,7 +256,7 @@ function initBot(sock) {
           await reply(`⚠️ Error executing *.${commandName}*:\n_${cmdErr.message}_`);
         }
       } else {
-        // Fallback for ping if file failed to load
+        // Fallback for ping
         if (commandName === "ping" || commandName === "speed" || commandName === "p") {
           try {
             await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
