@@ -14,6 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const axios = require("axios");
 
 const {
   restoreCredentials,
@@ -40,6 +41,9 @@ if (!fs.existsSync(commandsDir)) {
 
 let activeSocket = null;
 let pairingInProgress = false;
+
+// Global AI Auto-Reply State (Default: OFF)
+global.aiAutoReply = false;
 
 // Global Interactive Sessions (Song & TikTok)
 if (!global.songSessions) {
@@ -327,8 +331,81 @@ function initBot(sock) {
       } else if (prefix) {
         args = body.slice(prefix.length).trim().split(/ +/);
         commandName = args.shift().toLowerCase();
-      } else {
-        return;
+      }
+
+      // =========================================================
+      // .ai on / .ai off BUILT-IN COMMAND CONTROLLER
+      // =========================================================
+      if (commandName === "ai") {
+        const senderClean = sender.split("@")[0].replace(/[^0-9]/g, "");
+        if (senderClean !== DEVELOPER_NUMBER) {
+          return await reply("⚠️ මෙම විධානය භාවිතා කළ හැක්කේ Bot Owner හට පමණි.");
+        }
+
+        const mode = (args[0] || "").toLowerCase().trim();
+        if (mode === "on") {
+          global.aiAutoReply = true;
+          return await reply("🤖 *HESHAN AI DIGITAL PERSONA: ON* 🟢\nදැන් එන සාමාන්‍ය මැසේජ් වලට මගේ විලාසයෙන් AI එකෙන් auto reply ලැබෙනවා.");
+        } else if (mode === "off") {
+          global.aiAutoReply = false;
+          return await reply("🛑 *HESHAN AI DIGITAL PERSONA: OFF* 🔴\nAI Auto-reply අක්‍රිය කරන ලදී.");
+        } else {
+          return await reply(`💡 *AI විධාන භාවිතය:*\n• *.ai on* - AI Auto Reply සක්‍රිය කිරීමට\n• *.ai off* - AI Auto Reply අක්‍රිය කිරීමට\n\n📌 *වත්මන් තත්ත්වය:* ${global.aiAutoReply ? "ON 🟢" : "OFF 🔴"}`);
+        }
+      }
+
+      // =========================================================
+      // HESHAN AI AUTO-REPLY VIA OPENROUTER (DIGITAL PERSONA)
+      // =========================================================
+      const isCmd = Boolean(prefix) || ["1", "2", "3", "4", "5", "6"].includes(cleanBody);
+
+      if (global.aiAutoReply && !isCmd && !msg.key.fromMe) {
+        try {
+          const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
+          if (OPENROUTER_KEY) {
+            await sock.sendPresenceUpdate("composing", from);
+
+            const systemPrompt = 
+`You are Dinidu Heshan (Dark Dinu), an 18-year-old tech and AI bot creator from Embilipitiya.
+Tone & Persona Rules:
+- You are chatting with a friend on WhatsApp.
+- Speak in natural, friendly Sinhala & Singlish (words like "මචං", "බ්‍රෝ", "බං", "හරි බං").
+- Be chill, supportive, authentic, and direct.
+- You love coding, WhatsApp bots, tech, and bikes.
+- Reply concisely like a real WhatsApp text (1-3 sentences max). Never sound like an AI assistant or robot.`;
+
+            const response = await axios.post(
+              "https://openrouter.ai/api/v1/chat/completions",
+              {
+                model: "google/gemini-2.0-flash-exp:free",
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: cleanBody }
+                ],
+                temperature: 0.7,
+                max_tokens: 200
+              },
+              {
+                headers: {
+                  "Authorization": `Bearer ${OPENROUTER_KEY}`,
+                  "Content-Type": "application/json",
+                  "HTTP-Referer": "https://github.com",
+                  "X-Title": "Dark Dinu WhatsApp Bot"
+                },
+                timeout: 15000
+              }
+            );
+
+            const replyText = response.data?.choices?.[0]?.message?.content?.trim();
+
+            if (replyText) {
+              await sock.sendMessage(from, { text: replyText }, { quoted: msg });
+              return;
+            }
+          }
+        } catch (aiErr) {
+          console.error("OpenRouter AI Error:", aiErr.response?.data || aiErr.message);
+        }
       }
 
       if (!commandName) return;
@@ -488,6 +565,7 @@ app.get("/health", (req, res) => {
     status: "online",
     bot: "DARK DINU MD",
     developer: DEVELOPER_NAME,
+    ai_autoreply: global.aiAutoReply ? "active" : "disabled",
     loaded_commands: Array.from(commands.keys()).length,
     mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     whatsapp: activeSocket ? "active" : "not-connected",
