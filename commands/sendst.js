@@ -1,23 +1,12 @@
-const {
-  downloadContentFromMessage,
-  generateWAMessageContent,
-  generateWAMessageFromContent
-} = require("@whiskeysockets/baileys");
-
-// Stream එක Buffer එකක් කර ගැනීම
-async function getMediaBuffer(mediaMessage, type) {
-  const stream = await downloadContentFromMessage(mediaMessage, type);
-  let buffer = Buffer.from([]);
-  for await (const chunk of stream) {
-    buffer = Buffer.concat([buffer, chunk]);
-  }
-  return buffer;
-}
+const { downloadContentFromMessage } = require("@whiskeysockets/baileys");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 module.exports = {
   name: "status",
   alias: ["upstatus", "story", "ups"],
-  desc: "Force upload image, video or text to WhatsApp Status",
+  desc: "Upload media to status using local file streaming",
   async execute(sock, msg, args, from, context) {
     const { reply, isOwner, prefix } = context;
 
@@ -32,114 +21,115 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-      // 1. WhatsApp Status Recipients (Recipients ලැයිස්තුව හරියටම සකස් කිරීම)
-      // Bot ගේ JID එක කිසිසේත්ම statusJidList එකට නොදැමිය යුතුය!
-      let statusJidList = [];
-
+      // Bot එකේ contacts ලැයිස්තුව ලබා ගැනීම
+      let contacts = [];
       try {
-        if (sock.chats) {
-          statusJidList = Object.keys(sock.chats).filter(
-            (id) => id.endsWith("@s.whatsapp.net") && !id.includes("status")
-          );
+        if (sock.store && sock.store.contacts) {
+          contacts = Object.keys(sock.store.contacts);
+        } else if (sock.chats) {
+          contacts = Object.keys(sock.chats);
         }
       } catch (e) {}
 
-      // Recipients ලැයිස්තුවට command එක ගහපු owner ගේ JID එක එකතු කිරීම
-      const cleanFrom = from.endsWith("@s.whatsapp.net") ? from : null;
-      if (cleanFrom && !statusJidList.includes(cleanFrom)) {
-        statusJidList.push(cleanFrom);
-      }
+      // Contacts filter කිරීම (status සහ groups අයින් කර සාමාන්‍ය users පමණක් තෝරා ගැනීම)
+      let statusJidList = contacts.filter(
+        (jid) => jid.endsWith("@s.whatsapp.net") && !jid.includes("status")
+      );
 
-      // අවම වශයෙන් එක් recipient කෙනෙක්වත් අනිවාර්යයෙන්ම තිබිය යුතුය
+      // කිසිම contact එකක් හමු නොවුණහොත් ඔයාගේ JID එක ලබා දීම
       if (statusJidList.length === 0) {
         statusJidList = [from];
       }
 
-      // 2. Status Generator & Relayer Function
-      async function sendStatus(messageContent) {
-        const waMsg = generateWAMessageFromContent(
-          statusJid,
-          messageContent,
-          {
-            userJid: sock.user.id
-          }
-        );
-
-        await sock.relayMessage(statusJid, waMsg.message, {
-          messageId: waMsg.key.id,
-          statusJidList: statusJidList,
-          broadcast: true
-        });
-      }
-
       // ==========================================
-      // A. IMAGE STATUS
+      // 1. IMAGE STATUS (Temporary File Method)
       // ==========================================
       if (quoted?.imageMessage) {
-        const buffer = await getMediaBuffer(quoted.imageMessage, "image");
+        const stream = await downloadContentFromMessage(quoted.imageMessage, "image");
+        const tempPath = path.join(os.tmpdir(), `status_${Date.now()}.jpg`);
+        const fileStream = fs.createWriteStream(tempPath);
 
-        const mediaMsg = await generateWAMessageContent(
+        for await (const chunk of stream) {
+          fileStream.write(chunk);
+        }
+        fileStream.end();
+
+        await new Promise((resolve) => fileStream.on("finish", resolve));
+
+        await sock.sendMessage(
+          statusJid,
           {
-            image: buffer,
+            image: fs.readFileSync(tempPath),
             caption: captionText || quoted.imageMessage.caption || ""
           },
-          { upload: sock.waUploadToServer }
+          {
+            statusJidList: statusJidList
+          }
         );
 
-        await sendStatus(mediaMsg);
+        try { fs.unlinkSync(tempPath); } catch (e) {}
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Image එක 100% සාර්ථකව WhatsApp Status එකට වැටුණා! (Check My Status)");
+        return await reply("✅ Image එක Status එකට Send කරන ලදී! (Bot ගේ WhatsApp එකේ My Status බලන්න)");
       }
 
       // ==========================================
-      // B. VIDEO STATUS
+      // 2. VIDEO STATUS (Temporary File Method)
       // ==========================================
       if (quoted?.videoMessage) {
-        const buffer = await getMediaBuffer(quoted.videoMessage, "video");
+        const stream = await downloadContentFromMessage(quoted.videoMessage, "video");
+        const tempPath = path.join(os.tmpdir(), `status_${Date.now()}.mp4`);
+        const fileStream = fs.createWriteStream(tempPath);
 
-        const mediaMsg = await generateWAMessageContent(
+        for await (const chunk of stream) {
+          fileStream.write(chunk);
+        }
+        fileStream.end();
+
+        await new Promise((resolve) => fileStream.on("finish", resolve));
+
+        await sock.sendMessage(
+          statusJid,
           {
-            video: buffer,
+            video: fs.readFileSync(tempPath),
             caption: captionText || quoted.videoMessage.caption || ""
           },
-          { upload: sock.waUploadToServer }
+          {
+            statusJidList: statusJidList
+          }
         );
 
-        await sendStatus(mediaMsg);
+        try { fs.unlinkSync(tempPath); } catch (e) {}
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Video එක 100% සාර්ථකව WhatsApp Status එකට වැටුණා! (Check My Status)");
+        return await reply("✅ Video එක Status එකට Send කරන ලදී! (Bot ගේ WhatsApp එකේ My Status බලන්න)");
       }
 
       // ==========================================
-      // C. TEXT STATUS
+      // 3. TEXT STATUS
       // ==========================================
       if (captionText) {
-        const textMsg = {
-          extendedTextMessage: {
-            text: captionText,
-            textArgb: 0xffffffff,
-            backgroundArgb: 0xff7b1fa2, // Purple Background
-            font: 1
+        await sock.sendMessage(
+          statusJid,
+          {
+            text: captionText
+          },
+          {
+            statusJidList: statusJidList
           }
-        };
-
-        await sendStatus(textMsg);
+        );
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Text එක 100% සාර්ථකව WhatsApp Status එකට වැටුණා! (Check My Status)");
+        return await reply("✅ Text එක Status එකට Send කරන ලදී! (Bot ගේ WhatsApp එකේ My Status බලන්න)");
       }
 
       return await reply(
-        `💡 *භාවිතා කරන ආකාරය:*\n\n` +
-        `• Image/Video එකකට Reply කර: *${prefix}status <Caption එක>*\n` +
-        `• Text එකක් දැමීමට: *${prefix}status ඔබගේ Text එක*`
+        `💡 *භාවිතය:*\n• Image/Video එකකට Reply කර: *${prefix}status <Caption>*\n• Text සඳහා: *${prefix}status ඔබගේ Text එක*`
       );
 
     } catch (err) {
-      console.error("Status Fatal Error:", err);
-      await reply(`❌ Error: ${err.message || "Failed to push status"}`);
+      console.error("Status upload error:", err);
+      await reply(`❌ Error: ${err.message || "Failed to upload status"}`);
     }
   }
 };
