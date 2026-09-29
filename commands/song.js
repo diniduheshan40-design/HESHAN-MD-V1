@@ -1,13 +1,10 @@
 const yts = require("yt-search");
-const youtubedl = require("youtube-dl-exec");
-const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
-const fs = require("fs");
-const path = require("path");
+const axios = require("axios");
 
 module.exports = {
   name: "song",
   alias: ["play", "mp3", "audio"],
-  desc: "Download YouTube audio using youtube-dl-exec",
+  desc: "Download YouTube audio directly",
   async execute(sock, msg, args, from, { reply, prefix }) {
     try {
       const query = args.join(" ").trim();
@@ -17,7 +14,7 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-      // 1. Metadata Search
+      // 1. YouTube Metadata Search
       const search = await yts(query);
       const video = search.videos[0];
 
@@ -33,7 +30,7 @@ module.exports = {
       const thumbnail = video.thumbnail;
       const videoUrl = video.url;
 
-      // 2. Card Design
+      // 2. ඔයා තෝරාගත් Card Design එක
       const songCard = 
 `╔════════════════════════╗
    ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 ⚔️
@@ -59,40 +56,52 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
 
-      // 3. Audio Download via youtube-dl-exec (iOS Client Bypass)
-      const tempFilePath = path.join(__dirname, `audio_${Date.now()}.mp3`);
+      // 3. YouTube IP Bypass Audio Resolver
+      let dlUrl = null;
 
-      await youtubedl(videoUrl, {
-        extractAudio: true,
-        audioFormat: "mp3",
-        ffmpegLocation: ffmpegPath,
-        output: tempFilePath,
-        noWarnings: true,
-        noCheckCertificates: true,
-        preferFreeFormats: true,
-        extractorArgs: "youtube:player_client=ios",
-        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
-      });
+      // Primary Engine
+      try {
+        const res = await axios.get(`https://api.vreden.my.id/api/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 25000 });
+        if (res.data?.result?.download?.url) {
+          dlUrl = res.data.result.download.url;
+        }
+      } catch (e) {}
 
-      // 4. Send Audio Message
-      if (fs.existsSync(tempFilePath)) {
-        const audioBuffer = fs.readFileSync(tempFilePath);
-
-        await sock.sendMessage(from, {
-          audio: audioBuffer,
-          mimetype: "audio/mp4",
-          fileName: `${title}.mp3`
-        }, { quoted: msg });
-
-        await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
-
-        fs.unlinkSync(tempFilePath);
-      } else {
-        await reply("❌ Audio conversion failed.");
+      // Backup Engine
+      if (!dlUrl) {
+        try {
+          const res2 = await axios.get(`https://apis.davidcyriltech.my.id/download/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 25000 });
+          if (res2.data?.result?.download_url) {
+            dlUrl = res2.data.result.download_url;
+          }
+        } catch (e) {}
       }
 
+      // Third Backup Engine
+      if (!dlUrl) {
+        try {
+          const res3 = await axios.get(`https://api.diioffc.web.id/api/download/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 25000 });
+          if (res3.data?.result?.url) {
+            dlUrl = res3.data.result.url;
+          }
+        } catch (e) {}
+      }
+
+      if (!dlUrl) {
+        return await reply("❌ සින්දුවේ Audio එක ලබාගැනීමට නොහැකි විය. කරුණාකර සුළු මොහොතකින් නැවත උත්සාහ කරන්න.");
+      }
+
+      // 4. WhatsApp එකට Direct Stream ලෙස Audio එක යැවීම
+      await sock.sendMessage(from, {
+        audio: { url: dlUrl },
+        mimetype: "audio/mp4",
+        fileName: `${title}.mp3`
+      }, { quoted: msg });
+
+      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
+
     } catch (err) {
-      console.error("Song command error:", err);
+      console.error("Song error:", err);
       await reply(`❌ Error: ${err.message || "Failed to download song"}`);
     }
   }
