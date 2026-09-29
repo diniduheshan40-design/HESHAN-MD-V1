@@ -4,7 +4,7 @@ const axios = require("axios");
 module.exports = {
   name: "song",
   alias: ["play", "mp3", "audio"],
-  desc: "Download YouTube audio directly",
+  desc: "Direct YouTube Audio Downloader",
   async execute(sock, msg, args, from, { reply, prefix }) {
     try {
       const query = args.join(" ").trim();
@@ -12,7 +12,7 @@ module.exports = {
         return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song kuweniye\``);
       }
 
-      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } });
 
       // 1. YouTube Metadata Search
       const search = await yts(query);
@@ -30,7 +30,7 @@ module.exports = {
       const thumbnail = video.thumbnail;
       const videoUrl = video.url;
 
-      // 2. ඔයා තෝරාගත් Card Design එක
+      // 2. ඔයාගේ Song Card Design එක
       const songCard = 
 `╔════════════════════════╗
    ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 ⚔️
@@ -56,44 +56,58 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
 
-      // 3. YouTube IP Bypass Audio Resolver
-      let dlUrl = null;
+      // 3. YouTube Stream URL ලබා ගැනීම (Cobalt Core + Aggregator)
+      let audioStreamUrl = null;
 
-      // Primary Engine
-      try {
-        const res = await axios.get(`https://api.vreden.my.id/api/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 25000 });
-        if (res.data?.result?.download?.url) {
-          dlUrl = res.data.result.download.url;
-        }
-      } catch (e) {}
+      const instances = [
+        "https://api.cobalt.tools/api/json",
+        "https://cobalt.api.redstream.online/api/json",
+        "https://api.wuk.sh/api/json"
+      ];
 
-      // Backup Engine
-      if (!dlUrl) {
+      for (const instance of instances) {
         try {
-          const res2 = await axios.get(`https://apis.davidcyriltech.my.id/download/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 25000 });
-          if (res2.data?.result?.download_url) {
-            dlUrl = res2.data.result.download_url;
+          const res = await axios.post(instance, {
+            url: videoUrl,
+            downloadMode: "audio",
+            audioFormat: "mp3"
+          }, {
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            timeout: 10000
+          });
+
+          if (res.data?.url) {
+            audioStreamUrl = res.data.url;
+            break;
           }
         } catch (e) {}
       }
 
-      // Third Backup Engine
-      if (!dlUrl) {
+      // Backup Aggregator
+      if (!audioStreamUrl) {
         try {
-          const res3 = await axios.get(`https://api.diioffc.web.id/api/download/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 25000 });
-          if (res3.data?.result?.url) {
-            dlUrl = res3.data.result.url;
+          const fallback = await axios.get(`https://bk9.fun/download/youtube?url=${encodeURIComponent(videoUrl)}`, { timeout: 12000 });
+          if (fallback.data?.BK9?.BK8) {
+            audioStreamUrl = fallback.data.BK9.BK8;
           }
         } catch (e) {}
       }
 
-      if (!dlUrl) {
-        return await reply("❌ සින්දුවේ Audio එක ලබාගැනීමට නොහැකි විය. කරුණාකර සුළු මොහොතකින් නැවත උත්සාහ කරන්න.");
+      if (!audioStreamUrl) {
+        return await reply("❌ Audio සේවාව කාර්යබහුලයි. සුළු මොහොතකින් නැවත උත්සාහ කරන්න.");
       }
 
-      // 4. WhatsApp එකට Direct Stream ලෙස Audio එක යැවීම
+      // 4. WhatsApp එකට Audio Message එක Buffer එකක් ලෙස ලබාදී යැවීම
+      const audioRes = await axios.get(audioStreamUrl, {
+        responseType: "arraybuffer",
+        timeout: 30000
+      });
+
       await sock.sendMessage(from, {
-        audio: { url: dlUrl },
+        audio: Buffer.from(audioRes.data),
         mimetype: "audio/mp4",
         fileName: `${title}.mp3`
       }, { quoted: msg });
@@ -101,7 +115,7 @@ module.exports = {
       await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
     } catch (err) {
-      console.error("Song error:", err);
+      console.error("Song command error:", err.message);
       await reply(`❌ Error: ${err.message || "Failed to download song"}`);
     }
   }
