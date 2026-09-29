@@ -1,10 +1,15 @@
 const yts = require("yt-search");
 const axios = require("axios");
 
+// Song download sessions මතක තබා ගැනීමට (In-Memory Map)
+if (!global.songSessions) {
+  global.songSessions = new Map();
+}
+
 module.exports = {
   name: "song",
   alias: ["play", "mp3", "audio"],
-  desc: "Download YouTube audio via Chamindu 10Gbps API",
+  desc: "Download YouTube audio as Audio, Document or Voice note",
   async execute(sock, msg, args, from, { reply, prefix }) {
     try {
       const query = args.join(" ").trim();
@@ -14,7 +19,7 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-      // 1. YouTube Search හරහා Video URL එක සහ තොරතුරු ගැනීම
+      // 1. YouTube Metadata Search
       let videoUrl = query;
       let title = "";
       let duration = "";
@@ -35,38 +40,12 @@ module.exports = {
         title = video.title;
         duration = video.timestamp || "Unknown";
         views = Number(video.views || 0).toLocaleString();
-        artist = video.author?.name || "Unknown Artist";
+        artist = video.author?.name || "YouTube Artist";
         uploadYear = video.ago || "N/A";
         thumbnail = video.thumbnail;
       }
 
-      // 2. Card Design එක සකස් කර යැවීම
-      const songCard = 
-`╔════════════════════════╗
-   ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 ⚔️
-╚════════════════════════╝
- ┌───────────────────────
- │ 🎵 ᴛɪᴛʟᴇ : ${title || "YouTube Audio"}
- │ ⏱️ ᴅᴜʀᴀᴛɪᴏɴ : ${duration || "320kbps"}
- │ 👁️ ᴠɪᴇᴡs : ${views || "N/A"}
- │ 👤 ᴀʀᴛɪsᴛ : ${artist || "YouTube Artist"}
- │ 📡 ᴜᴘʟᴏᴀᴅ : ${uploadYear || "N/A"}
- └───────────────────────
- > ⏳ *Uploading your audio...*
- > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴ𝐔 ᴛᴇᴄʜ 🩸`;
-
-      if (thumbnail) {
-        await sock.sendMessage(from, {
-          image: { url: thumbnail },
-          caption: songCard
-        }, { quoted: msg });
-      } else {
-        await reply(songCard);
-      }
-
-      await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
-
-      // 3. Chamindu YouTube MP3 API Call
+      // 2. Chamindu API හරහා Direct CDN Download URL එක ලබා ගැනීම
       const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
       const apiUrl = `https://api.chamindu.site/api/v1/youtube/mp3?url=${encodeURIComponent(videoUrl)}&quality=320kbps&api_key=${apiKey}`;
 
@@ -84,14 +63,54 @@ module.exports = {
         throw new Error("Direct Download Link එක හමු නොවීය.");
       }
 
-      // 4. WhatsApp වෙත Direct CDN එකෙන් Audio එක යැවීම
-      await sock.sendMessage(from, {
-        audio: { url: downloadUrl },
-        mimetype: "audio/mp4",
-        fileName: `${finalTitle}.mp3`
-      }, { quoted: msg });
+      // 3. Premium Glassmorphic Card Design
+      const songCard = 
+`╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 』───◆
+│
+│ 🎼 *ᴛɪᴛʟᴇ:* ${finalTitle}
+│ ⏳ *ᴅᴜʀᴀᴛɪᴏɴ:* ${duration || "320kbps"}
+│ 👁️ *ᴠɪᴇᴡs:* ${views || "N/A"}
+│ 🎙️ *ᴀʀᴛɪsᴛ:* ${artist}
+│ 📅 *ᴜᴘʟᴏᴀᴅ:* ${uploadYear}
+│
+├───『 📥 𝐒𝐄𝐋𝐄𝐂𝐓 𝐅𝐎𝐑𝐌𝐀𝐓 』───
+│
+│  [1] 🎵 *Audio (MP3)*
+│  [2] 📁 *Document (File)*
+│  [3] 🎙️ *Voice Note (PTT)*
+│
+╰──────────────────────────◆
+> *Reply to this message with 1, 2, or 3*
+> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`;
 
-      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
+      let sentMsg;
+      if (thumbnail) {
+        sentMsg = await sock.sendMessage(from, {
+          image: { url: thumbnail },
+          caption: songCard
+        }, { quoted: msg });
+      } else {
+        sentMsg = await reply(songCard);
+      }
+
+      // Session එක save කර තැබීම (User ගේ reply එක අඳුනා ගැනීමට)
+      if (sentMsg?.key?.id) {
+        global.songSessions.set(sentMsg.key.id, {
+          title: finalTitle,
+          url: downloadUrl,
+          from: from,
+          createdAt: Date.now()
+        });
+
+        // විනාඩි 10 කට පසු Session එක Memory එකෙන් ඉවත් කිරීම
+        setTimeout(() => {
+          if (global.songSessions.has(sentMsg.key.id)) {
+            global.songSessions.delete(sentMsg.key.id);
+          }
+        }, 10 * 60 * 1000);
+      }
+
+      await sock.sendMessage(from, { react: { text: "⚡", key: msg.key } });
 
     } catch (err) {
       console.error("Chamindu API Song Error:", err.message);
