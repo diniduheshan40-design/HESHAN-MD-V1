@@ -1,7 +1,6 @@
 const yts = require("yt-search");
 const axios = require("axios");
 
-// Song download sessions මතක තබා ගැනීමට (In-Memory Map)
 if (!global.songSessions) {
   global.songSessions = new Map();
 }
@@ -14,10 +13,10 @@ module.exports = {
     try {
       const query = args.join(" ").trim();
       if (!query) {
-        return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song kuweniye\``);
+        return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song ma diha\``);
       }
 
-      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } });
 
       // 1. YouTube Metadata Search
       let videoUrl = query;
@@ -45,25 +44,50 @@ module.exports = {
         thumbnail = video.thumbnail;
       }
 
-      // 2. Chamindu API හරහා Direct CDN Download URL එක ලබා ගැනීම
-      const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
-      const apiUrl = `https://api.chamindu.site/api/v1/youtube/mp3?url=${encodeURIComponent(videoUrl)}&quality=320kbps&api_key=${apiKey}`;
+      // 2. High-Speed Multi-Engine Stream URL Extractor
+      let downloadUrl = null;
 
-      const res = await axios.get(apiUrl, { timeout: 30000 });
-
-      if (!res.data?.status || !res.data?.data) {
-        throw new Error("API එකෙන් Audio Link එක ලබාගැනීමට නොහැකි විය.");
+      // ENGINE 1: Chamindu API (Timeout 12s දක්වා අඩු කර ඇත - හිරවුණොත් Fallback එකට යාමට)
+      try {
+        const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
+        const apiUrl = `https://api.chamindu.site/api/v1/youtube/mp3?url=${encodeURIComponent(videoUrl)}&quality=320kbps&api_key=${apiKey}`;
+        const res = await axios.get(apiUrl, { timeout: 12000 });
+        if (res.data?.status && res.data?.data) {
+          downloadUrl = res.data.data.download_url || res.data.data.direct_url;
+        }
+      } catch (e) {
+        console.log("Chamindu API busy/timeout, switching to Engine 2...");
       }
 
-      const songData = res.data.data;
-      const downloadUrl = songData.download_url || songData.direct_url;
-      const finalTitle = title || songData.title || "audio";
+      // ENGINE 2: BK9 YouTube Engine (High-Speed Backup)
+      if (!downloadUrl) {
+        try {
+          const res2 = await axios.get(`https://bk9.fun/download/youtube?url=${encodeURIComponent(videoUrl)}`, { timeout: 15000 });
+          if (res2.data?.BK9?.BK8) {
+            downloadUrl = res2.data.BK9.BK8;
+          }
+        } catch (e) {
+          console.log("Engine 2 failed, switching to Engine 3...");
+        }
+      }
+
+      // ENGINE 3: Vreden Direct High-Speed API
+      if (!downloadUrl) {
+        try {
+          const res3 = await axios.get(`https://api.vreden.my.id/api/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 15000 });
+          if (res3.data?.result?.download?.url) {
+            downloadUrl = res3.data.result.download.url;
+          }
+        } catch (e) {}
+      }
 
       if (!downloadUrl) {
-        throw new Error("Direct Download Link එක හමු නොවීය.");
+        return await reply("❌ සින්දුවේ Audio සේවාවන් මේ මොහොතේ කාර්යබහුලයි. කරුණාකර තත්පර කිහිපයකින් නැවත උත්සාහ කරන්න.");
       }
 
-      // 3. Premium Glassmorphic Card Design
+      const finalTitle = title || "YouTube Audio";
+
+      // 3. UI Card Design
       const songCard = 
 `╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 』───◆
 │
@@ -93,7 +117,7 @@ module.exports = {
         sentMsg = await reply(songCard);
       }
 
-      // Session එක save කර තැබීම (User ගේ reply එක අඳුනා ගැනීමට)
+      // Song Session Registration
       if (sentMsg?.key?.id) {
         global.songSessions.set(sentMsg.key.id, {
           title: finalTitle,
@@ -102,7 +126,6 @@ module.exports = {
           createdAt: Date.now()
         });
 
-        // විනාඩි 10 කට පසු Session එක Memory එකෙන් ඉවත් කිරීම
         setTimeout(() => {
           if (global.songSessions.has(sentMsg.key.id)) {
             global.songSessions.delete(sentMsg.key.id);
@@ -113,8 +136,8 @@ module.exports = {
       await sock.sendMessage(from, { react: { text: "⚡", key: msg.key } });
 
     } catch (err) {
-      console.error("Chamindu API Song Error:", err.message);
-      await reply(`❌ සින්දුව බාගත කිරීම අසාර්ථක විය: ${err.message || "Error"}`);
+      console.error("Song Error:", err.message);
+      await reply(`❌ දෝෂයක්: ${err.message || "Failed"}`);
     }
   }
 };
