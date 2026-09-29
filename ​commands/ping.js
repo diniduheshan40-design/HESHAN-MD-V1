@@ -1,57 +1,105 @@
 module.exports = {
   name: 'ping',
   alias: ['speed', 'p'],
+
   desc: 'DARK DINU speed testing',
+
   async execute(sock, msg, args, chatJid) {
     try {
-      // JID එක හරියටම තෝරා ගැනීම (Self-chat, DM හෝ Group)
+      // Target chat
       const targetJid = chatJid || msg.key.remoteJid;
+
+      if (!targetJid) {
+        return;
+      }
+
+      // Start timer
       const start = Date.now();
 
-      // 1. Initial React 🚀 (Error ආවත් command එක නවතින්නෙ නෑ)
-      await sock.sendMessage(targetJid, { 
-        react: { text: "🚀", key: msg.key } 
+      // 🚀 Initial reaction
+      await sock.sendMessage(targetJid, {
+        react: {
+          text: '🚀',
+          key: msg.key
+        }
       }).catch(() => {});
 
-      // 2. Initial Message එක යැවීම
-      let sent = null;
+      // Send testing message
+      let sentMessage = null;
+
       try {
-        sent = await sock.sendMessage(targetJid, { 
-          text: '⚡ *Testing speed...*' 
-        }, { quoted: msg });
-      } catch (e) {
-        sent = await sock.sendMessage(targetJid, { 
-          text: '⚡ *Testing speed...*' 
+        sentMessage = await sock.sendMessage(
+          targetJid,
+          {
+            text: '⚡ *Testing speed...*'
+          },
+          {
+            quoted: msg
+          }
+        );
+      } catch (error) {
+        sentMessage = await sock.sendMessage(targetJid, {
+          text: '⚡ *Testing speed...*'
         });
       }
 
+      // Calculate latency
       const latency = Date.now() - start;
-      const finalReply = `*pong ${latency}ms 🔥*`;
 
-      // 3. React එක ⚡ බවට මාරු කිරීම
-      await sock.sendMessage(targetJid, { 
-        react: { text: "⚡", key: msg.key } 
+      const finalReply =
+        `*pong ${latency}ms 🔥*`;
+
+      // ⚡ Change reaction
+      await sock.sendMessage(targetJid, {
+        react: {
+          text: '⚡',
+          key: msg.key
+        }
       }).catch(() => {});
 
-      // 4. Message Edit කිරීම (Edit fail උනොත් කෙලින්ම reply එක යැවීම)
-      if (sent && sent.key) {
+      // Edit original message
+      if (sentMessage && sentMessage.key) {
         try {
           await sock.sendMessage(targetJid, {
             text: finalReply,
-            edit: sent.key
+            edit: sentMessage.key
           });
-        } catch (editErr) {
-          await sock.sendMessage(targetJid, { text: finalReply }, { quoted: msg });
+
+          return;
+        } catch (editError) {
+          console.log(
+            '⚠️ Message edit failed:',
+            editError.message
+          );
         }
-      } else {
-        await sock.sendMessage(targetJid, { text: finalReply }, { quoted: msg });
       }
 
-    } catch (err) {
-      console.error("❌ Ping command error:", err.message);
-      // මොනම error එකක් ආවත් මේ text එක අනිවාර්යයෙන්ම යනවා
-      const fallbackJid = chatJid || msg.key.remoteJid;
-      await sock.sendMessage(fallbackJid, { text: "*pong! DARK DINU is active 🔥*" }).catch(() => {});
+      // Fallback reply
+      await sock.sendMessage(
+        targetJid,
+        {
+          text: finalReply
+        },
+        {
+          quoted: msg
+        }
+      );
+
+    } catch (error) {
+      console.error(
+        '❌ Ping command error:',
+        error.message
+      );
+
+      // Final fallback
+      const fallbackJid =
+        chatJid || msg.key.remoteJid;
+
+      if (fallbackJid) {
+        await sock.sendMessage(fallbackJid, {
+          text: '*pong! DARK DINU is active 🔥*'
+        }).catch(() => {});
+      }
     }
   }
 };
