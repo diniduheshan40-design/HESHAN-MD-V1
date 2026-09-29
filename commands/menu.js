@@ -6,7 +6,7 @@ module.exports = {
   desc: "Interactive category menu",
   async execute(sock, msg, args, from, { sender, DEVELOPER_NAME, prefix }) {
     try {
-      await sock.sendMessage(from, { react: { text: "📜", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "📃", key: msg.key } });
 
       const rawUser = sender ? sender.split("@")[0].replace(/[^0-9]/g, "") : "User";
       const uptimeSec = Math.floor(process.uptime());
