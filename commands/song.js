@@ -1,13 +1,10 @@
 const yts = require("yt-search");
-const youtubedl = require("youtube-dl-exec");
-const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
-const fs = require("fs");
-const path = require("path");
+const axios = require("axios");
 
 module.exports = {
   name: "song",
   alias: ["play", "mp3", "audio"],
-  desc: "Download YouTube audio by search or URL",
+  desc: "Download YouTube audio without cloud block",
   async execute(sock, msg, args, from, { reply, prefix }) {
     try {
       const query = args.join(" ").trim();
@@ -17,7 +14,7 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-      // 1. YouTube Search එක yt-search එකෙන් කරගන්නවා (YouTube Bot Block නොවී තොරතුරු ගන්න)
+      // 1. YouTube Search
       const search = await yts(query);
       const video = search.videos[0];
 
@@ -33,7 +30,7 @@ module.exports = {
       const thumbnail = video.thumbnail;
       const videoUrl = video.url;
 
-      // 2. Card Design එක
+      // 2. Card Design
       const songCard = 
 `╔════════════════════════╗
    ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 ⚔️
@@ -46,7 +43,7 @@ module.exports = {
  │ 📡 ᴜᴘʟᴏᴀᴅ : ${uploadYear}
  └───────────────────────
  > ⏳ *Uploading your audio...*
- > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴ𝐔 ᴛᴇᴄʜ 🩸`;
+ > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴᴜ ᴛᴇᴄʜ 🩸`;
 
       if (thumbnail) {
         await sock.sendMessage(from, {
@@ -59,45 +56,53 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
 
-      // 3. Audio එක Download කිරීම (Android/iOS Client Bypass එකක් සහිතව)
-      const tempFileName = `song_${Date.now()}.mp3`;
-      const tempFilePath = path.join(__dirname, tempFileName);
+      // 3. YouTube Cloud Block Bypass කර Download Link ලබා ගැනීම (Multiple APIs)
+      let audioDownloadUrl = null;
 
-      await youtubedl(videoUrl, {
-        extractAudio: true,
-        audioFormat: "mp3",
-        ffmpegLocation: ffmpegPath,
-        output: tempFilePath,
-        noWarnings: true,
-        noCheckCertificates: true,
-        // Cloud Block එක Bypass කිරීම සඳහා
-        extractorArgs: "youtube:player_client=android,web",
-        addHeader: [
-          "user-agent:Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-        ]
-      });
+      // API 1: gifted-dls / Gifted API
+      try {
+        const apiRes = await axios.get(`https://api.giftedtech.my.id/api/download/dlmp3?apikey=gifted&url=${encodeURIComponent(videoUrl)}`, { timeout: 15000 });
+        if (apiRes.data?.success && apiRes.data?.result?.download_url) {
+          audioDownloadUrl = apiRes.data.result.download_url;
+        }
+      } catch (e) {}
 
-      // 4. WhatsApp එකට Audio එක යැවීම
-      if (fs.existsSync(tempFilePath)) {
-        const audioBuffer = fs.readFileSync(tempFilePath);
-
-        await sock.sendMessage(from, {
-          audio: audioBuffer,
-          mimetype: "audio/mp4",
-          fileName: `${title}.mp3`
-        }, { quoted: msg });
-
-        await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
-
-        // Clean up temp file
-        fs.unlinkSync(tempFilePath);
-      } else {
-        await reply("❌ Audio conversion failed.");
+      // API 2: Fallback API
+      if (!audioDownloadUrl) {
+        try {
+          const apiRes2 = await axios.get(`https://api.dhamxx.me/api/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 15000 });
+          if (apiRes2.data?.result?.url) {
+            audioDownloadUrl = apiRes2.data.result.url;
+          }
+        } catch (e) {}
       }
 
+      // API 3: NexOrbit API Fallback
+      if (!audioDownloadUrl) {
+        try {
+          const apiRes3 = await axios.get(`https://api.nexorbit.link/api/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 15000 });
+          if (apiRes3.data?.download) {
+            audioDownloadUrl = apiRes3.data.download;
+          }
+        } catch (e) {}
+      }
+
+      if (!audioDownloadUrl) {
+        throw new Error("Download stream unavailable at the moment. Please try again.");
+      }
+
+      // 4. Audio එක WhatsApp එකට කෙළින්ම Audio සහ Document Format දෙකෙන්ම support වන ලෙස යැවීම
+      await sock.sendMessage(from, {
+        audio: { url: audioDownloadUrl },
+        mimetype: "audio/mp4",
+        fileName: `${title}.mp3`
+      }, { quoted: msg });
+
+      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
+
     } catch (err) {
-      console.error("Song command error:", err);
-      await reply(`❌ Error: ${err.message || "Failed to download song"}`);
+      console.error("Song error:", err.message);
+      await reply(`❌ සින්දුව බාගත කිරීමේ දෝෂයක්: ${err.message || "Failed"}`);
     }
   }
 };
