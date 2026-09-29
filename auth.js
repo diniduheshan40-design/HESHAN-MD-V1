@@ -21,7 +21,7 @@ let reconnectTimer = null;
 let onSocketCreatedCallback = null;
 
 /* =========================================================
-   MONGODB SESSION MODEL (Mixed for 100% Safe JSON Storage)
+   MONGODB SESSION MODEL (Mixed for Safe JSON Storage)
 ========================================================= */
 
 const SessionSchema = new mongoose.Schema(
@@ -66,7 +66,6 @@ async function restoreCredentials() {
 
     let count = 0;
     for (const [key, content] of Object.entries(data.files)) {
-      // Revert sanitized filename back
       const fileName = key.replace(/___dot___/g, ".");
       const filePath = path.join(sessionDir, fileName);
       const dir = path.dirname(filePath);
@@ -97,7 +96,6 @@ async function backupAllCredentials() {
     for (const fileName of allFiles) {
       const filePath = path.join(sessionDir, fileName);
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        // Mongo safe key encoding
         const safeKey = fileName.replace(/\./g, "___dot___");
         files[safeKey] = fs.readFileSync(filePath, "utf8");
       }
@@ -151,7 +149,6 @@ async function createSocket(state, saveCreds) {
     const { connection, lastDisconnect } = update;
 
     if (connection === "open") {
-      console.log("✅ [WHATSAPP] Session is LIVE and Active!");
       await backupAllCredentials();
     }
 
