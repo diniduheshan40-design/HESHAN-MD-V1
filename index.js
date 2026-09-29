@@ -45,27 +45,60 @@ const MetaSchema = new mongoose.Schema({
 const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
 
 /* =========================================================
-   DYNAMIC COMMAND LOADER (Live Auto-Reload)
+   DYNAMIC COMMAND LOADER (Safe Linux & Live Reload)
 ========================================================= */
 
 function getCommand(cmdName) {
   try {
+    if (!fs.existsSync(commandsDir)) return null;
     const files = fs.readdirSync(commandsDir).filter(f => f.endsWith(".js"));
+
     for (const file of files) {
       const fullPath = path.join(commandsDir, file);
-      delete require.cache[require.resolve(fullPath)]; // Live Auto-Reload
-      const cmdObj = require(fullPath);
+      try {
+        delete require.cache[require.resolve(fullPath)];
+        const cmdObj = require(fullPath);
 
-      if (cmdObj && cmdObj.name) {
-        const isNameMatch = cmdObj.name.toLowerCase() === cmdName;
-        const isAliasMatch = Array.isArray(cmdObj.alias) && cmdObj.alias.map(a => a.toLowerCase()).includes(cmdName);
-        if (isNameMatch || isAliasMatch) return cmdObj;
+        if (cmdObj && cmdObj.name) {
+          const isNameMatch = cmdObj.name.toLowerCase() === cmdName;
+          const isAliasMatch = Array.isArray(cmdObj.alias) && cmdObj.alias.map(a => a.toLowerCase()).includes(cmdName);
+          if (isNameMatch || isAliasMatch) return cmdObj;
+        }
+      } catch (err) {
+        console.error(`❌ Error loading file ${file}:`, err.message);
       }
     }
   } catch (e) {
     console.error("Commands read error:", e.message);
   }
   return null;
+}
+
+/* =========================================================
+   HELPER: EXTRACT TEXT SAFELY
+========================================================= */
+
+function extractMessageBody(msg) {
+  if (!msg || !msg.message) return "";
+  let m = msg.message;
+
+  // Unwrap protocols and wrappers
+  if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+  if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+  if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+  if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+  if (m.editedMessage) m = m.editedMessage.message?.protocolMessage?.editedMessage || m.editedMessage;
+
+  return (
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    m.buttonsResponseMessage?.selectedButtonId ||
+    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    m.templateButtonReplyMessage?.selectedId ||
+    ""
+  ).trim();
 }
 
 /* =========================================================
@@ -76,7 +109,7 @@ function initBot(sock) {
   if (!sock || !sock.ev) return;
   activeSocket = sock;
 
-  // 1. Connection Event: User & Developer Alerts
+  // 1. Connection Event
   sock.ev.on("connection.update", async (update) => {
     const { connection } = update;
 
@@ -135,43 +168,22 @@ function initBot(sock) {
     }
   });
 
-  // 2. Incoming Messages Listener (Fully Fixed for Self-chat, DMs & Groups)
-  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+  // 2. Incoming Messages Listener (Guaranteed Execution)
+  sock.ev.on("messages.upsert", async (chatUpdate) => {
     try {
-      const msg = messages[0];
+      if (!chatUpdate.messages || chatUpdate.messages.length === 0) return;
+      const msg = chatUpdate.messages[0];
       if (!msg || !msg.message) return;
 
       const from = msg.key.remoteJid;
       if (!from || from === "status@broadcast") return;
 
-      const isGroup = from.endsWith("@g.us");
-      const botNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
-      const sender = msg.key.fromMe 
-        ? `${botNumber}@s.whatsapp.net` 
-        : (isGroup ? msg.key.participant : from);
-
-      // Deep unwrap message layers (handles ephemeral, viewOnce, edits)
-      let m = msg.message;
-      if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-      if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
-      if (m.viewOnceMessage) m = m.viewOnceMessage.message;
-      if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
-
-      // Extract text content reliably
-      const body = (
-        m.conversation ||
-        m.extendedTextMessage?.text ||
-        m.imageMessage?.caption ||
-        m.videoMessage?.caption ||
-        m.buttonsResponseMessage?.selectedButtonId ||
-        m.listResponseMessage?.singleSelectReply?.selectedRowId ||
-        m.templateButtonReplyMessage?.selectedId ||
-        ""
-      ).trim();
-
+      const body = extractMessageBody(msg);
       if (!body) return;
 
-      // Check prefixes (. , ! , # , /)
+      console.log(`📩 [CHAT]: From: ${from} | Text: "${body}"`);
+
+      // Prefix check (. / ! # /)
       const prefixes = [".", "!", "#", "/"];
       const prefix = prefixes.find(p => body.startsWith(p));
       if (!prefix) return;
@@ -180,29 +192,48 @@ function initBot(sock) {
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: ${commandName} | From: ${from}`);
+      console.log(`⚡ [EXECUTE]: Running ${commandName}...`);
 
-      // Universal reply helper
+      // Universal Reply Helper
       const reply = async (text) => {
         return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
       };
 
-      // Search & execute command
+      // 🔴 FAIL-SAFE INTERNAL PING (commands folder එකේ ping.js නැතත් හෝ fail වුණත් මේක අනිවාර්යයෙන්ම දුවනවා)
+      if (commandName === "ping" || commandName === "p" || commandName === "speed") {
+        try {
+          await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
+          const start = Date.now();
+          const latency = Date.now() - start;
+          const sent = await sock.sendMessage(from, { 
+            text: `⚡ *Pong!* \n⏱️ Speed: *${latency}ms*\n🤖 *DARK DINU MD Online!*` 
+          }, { quoted: msg });
+
+          if (sent?.key) {
+            await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
+          }
+          return;
+        } catch (pingErr) {
+          console.error("Internal ping error:", pingErr);
+        }
+      }
+
+      // External Commands Execution
       const targetCommand = getCommand(commandName);
       if (targetCommand && typeof targetCommand.execute === "function") {
         await targetCommand.execute(sock, msg, args, from, {
           body,
           prefix,
-          sender,
-          isGroup,
           reply,
+          DEVELOPER_NAME,
           DEVELOPER_NUMBER
         });
       } else {
         console.log(`⚠️ Command not found: ${commandName}`);
       }
+
     } catch (e) {
-      console.error("❌ Command execution error:", e.message);
+      console.error("❌ Message Upsert Error:", e);
     }
   });
 }
