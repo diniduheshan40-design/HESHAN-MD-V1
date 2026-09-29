@@ -1,4 +1,14 @@
-const { downloadMediaMessage } = require("@whiskeysockets/baileys");
+const { downloadContentFromMessage } = require("@whiskeysockets/baileys");
+
+// Media download helper
+async function getMediaBuffer(mediaMessage, type) {
+  const stream = await downloadContentFromMessage(mediaMessage, type);
+  let buffer = Buffer.from([]);
+  for await (const chunk of stream) {
+    buffer = Buffer.concat([buffer, chunk]);
+  }
+  return buffer;
+}
 
 module.exports = {
   name: "status",
@@ -7,7 +17,6 @@ module.exports = {
   async execute(sock, msg, args, from, context) {
     const { reply, isOwner, prefix } = context;
 
-    // ආරක්ෂාව සඳහා Bot Owner හට පමණක් Status Upload කළ හැක
     if (!isOwner) {
       return await reply("⚠️ මෙම විධානය භාවිත කළ හැක්කේ Bot Owner හට පමණි.");
     }
@@ -19,22 +28,23 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
+      // Status එක දකින්න ඕන audience එක (Contacts වලට පේන්න)
+      const statusOptions = {
+        statusJidList: [from]
+      };
+
       // 1. Image Status Upload
       if (quoted?.imageMessage) {
-        const fakeQuoted = {
-          message: { imageMessage: quoted.imageMessage },
-          key: {
-            remoteJid: from,
-            id: msg.message.extendedTextMessage.contextInfo.stanzaId
-          }
-        };
+        const buffer = await getMediaBuffer(quoted.imageMessage, "image");
 
-        const buffer = await downloadMediaMessage(fakeQuoted, "buffer", {});
-
-        await sock.sendMessage(statusJid, {
-          image: buffer,
-          caption: captionText || quoted.imageMessage.caption || ""
-        });
+        await sock.sendMessage(
+          statusJid,
+          {
+            image: buffer,
+            caption: captionText || quoted.imageMessage.caption || ""
+          },
+          statusOptions
+        );
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
         return await reply("✅ Image එක සාර්ථකව WhatsApp Status එකට Upload කරන ලදී!");
@@ -42,69 +52,63 @@ module.exports = {
 
       // 2. Video Status Upload
       if (quoted?.videoMessage) {
-        const fakeQuoted = {
-          message: { videoMessage: quoted.videoMessage },
-          key: {
-            remoteJid: from,
-            id: msg.message.extendedTextMessage.contextInfo.stanzaId
-          }
-        };
+        const buffer = await getMediaBuffer(quoted.videoMessage, "video");
 
-        const buffer = await downloadMediaMessage(fakeQuoted, "buffer", {});
-
-        await sock.sendMessage(statusJid, {
-          video: buffer,
-          caption: captionText || quoted.videoMessage.caption || ""
-        });
+        await sock.sendMessage(
+          statusJid,
+          {
+            video: buffer,
+            caption: captionText || quoted.videoMessage.caption || ""
+          },
+          statusOptions
+        );
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
         return await reply("✅ Video එක සාර්ථකව WhatsApp Status එකට Upload කරන ලදී!");
       }
 
-      // 3. Audio/Voice Note Status Upload
+      // 3. Audio / Voice Status Upload
       if (quoted?.audioMessage) {
-        const fakeQuoted = {
-          message: { audioMessage: quoted.audioMessage },
-          key: {
-            remoteJid: from,
-            id: msg.message.extendedTextMessage.contextInfo.stanzaId
-          }
-        };
+        const buffer = await getMediaBuffer(quoted.audioMessage, "audio");
 
-        const buffer = await downloadMediaMessage(fakeQuoted, "buffer", {});
-
-        await sock.sendMessage(statusJid, {
-          audio: buffer,
-          mimetype: "audio/mp4",
-          ptt: true
-        });
+        await sock.sendMessage(
+          statusJid,
+          {
+            audio: buffer,
+            mimetype: "audio/mp4",
+            ptt: true
+          },
+          statusOptions
+        );
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-        return await reply("✅ Audio එක සාර්ථකව Voice Status එකක් ලෙස Upload කරන ලදී!");
+        return await reply("✅ Voice Note එක සාර්ථකව Status එකට Upload කරන ලදී!");
       }
 
       // 4. Text Status Upload
       if (captionText) {
-        await sock.sendMessage(statusJid, {
-          text: captionText,
-          backgroundColor: "#080808",
-          font: 3
-        });
+        await sock.sendMessage(
+          statusJid,
+          {
+            text: captionText
+          },
+          statusOptions
+        );
 
         await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
         return await reply("✅ Text එක සාර්ථකව WhatsApp Status එකට Upload කරන ලදී!");
       }
 
-      // කිසිවක් නැති විට Help පණිවිඩය
+      // Help Text
       return await reply(
         `💡 *භාවිතා කරන ආකාරය:*\n\n` +
-        `1. Image එකකට හෝ Video එකකට Reply කර:\n   *${prefix}status <Caption එක (අවශ්‍ය නම්)>*\n\n` +
-        `2. Text Status එකක් දැමීමට:\n   *${prefix}status ඔබගේ Text එක මෙතන ලියන්න*`
+        `• Image/Video එකකට Reply කර: *${prefix}status <Caption එක>*\n` +
+        `• Text එකක් දැමීමට: *${prefix}status ඔබගේ Text එක*`
       );
 
     } catch (err) {
       console.error("Status upload error:", err);
-      await reply(`❌ Status Upload කිරීම අසාර්ථක විය: ${err.message}`);
+      await reply(`❌ Error: ${err.message || "Status upload failed"}`);
     }
   }
 };
