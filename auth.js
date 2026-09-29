@@ -1,153 +1,704 @@
-const fs = require('fs');
-const path = require('path');
-const mongoose = require('mongoose');
-const { 
-  default: makeWASocket, 
-  delay, 
-  useMultiFileAuthState, 
-  fetchLatestBaileysVersion, 
+const fs = require("fs");
+const path = require("path");
+const pino = require("pino");
+
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  DisconnectReason,
-  Browsers 
-} = require('@whiskeysockets/baileys');
-const pino = require('pino');
+  Browsers,
+  DisconnectReason
+} = require("@whiskeysockets/baileys");
 
-const sessionDir = path.join(__dirname, 'session');
+const mongoose = require("mongoose");
 
-// MongoDB Session Storage Schema
-const SessionSchema = new mongoose.Schema({
-  sessionId: { type: String, required: true, unique: true },
-  files: { type: Map, of: String }
+const logger = pino({
+  level:"silent"
 });
-const SessionModel = mongoose.models.Session || mongoose.model('Session', SessionSchema);
 
-// Restore session from MongoDB
-async function restoreCredentials() {
-  try {
-    const doc = await SessionModel.findOne({ sessionId: 'dark_dinu_session' });
-    if (!doc || !doc.files || doc.files.size === 0) return false;
+const sessionDir =
+  path.join(__dirname,"session");
 
-    if (!fs.existsSync(sessionDir)) {
-      fs.mkdirSync(sessionDir, { recursive: true });
+let activeSocket = null;
+let reconnectTimer = null;
+let backupRunning = false;
+let backupAgain = false;
+
+/* =========================================================
+   MONGODB SESSION MODEL
+========================================================= */
+
+const SessionSchema =
+  new mongoose.Schema(
+    {
+      sessionId:{
+        type:String,
+        unique:true,
+        required:true
+      },
+
+      files:{
+        type:Map,
+        of:String,
+        default:{}
+      }
+
+    },
+    {
+      timestamps:true
     }
+  );
 
-    for (let [fileName, content] of doc.files.entries()) {
-      const realFileName = fileName.replace(/__dot__/g, '.');
-      fs.writeFileSync(path.join(sessionDir, realFileName), content, 'utf-8');
-    }
-    return true;
-  } catch (e) {
-    console.error('Session restore failed:', e);
-    return false;
+const SessionModel =
+  mongoose.models.DarkDinuSession ||
+  mongoose.model(
+    "DarkDinuSession",
+    SessionSchema
+  );
+
+/* =========================================================
+   SESSION DIRECTORY
+========================================================= */
+
+function ensureSessionDir(){
+
+  if(!fs.existsSync(sessionDir)){
+
+    fs.mkdirSync(
+      sessionDir,
+      {
+        recursive:true
+      }
+    );
+
   }
+
 }
 
-// Backup session to MongoDB
-async function backupCredentials() {
-  try {
-    if (!fs.existsSync(sessionDir)) return;
-    const fileList = fs.readdirSync(sessionDir);
-    const filesMap = new Map();
+/* =========================================================
+   DELETE SESSION
+========================================================= */
 
-    for (let file of fileList) {
-      const filePath = path.join(sessionDir, file);
-      if (fs.statSync(filePath).isFile()) {
-        const safeFileName = file.replace(/\./g, '__dot__');
-        filesMap.set(safeFileName, fs.readFileSync(filePath, 'utf-8'));
+function deleteSessionDir(){
+
+  if(fs.existsSync(sessionDir)){
+
+    fs.rmSync(
+      sessionDir,
+      {
+        recursive:true,
+        force:true
       }
+    );
+
+  }
+
+}
+
+/* =========================================================
+   RESTORE MONGODB SESSION
+========================================================= */
+
+async function restoreCredentials(){
+
+  ensureSessionDir();
+
+  try{
+
+    const data =
+      await SessionModel.findOne({
+        sessionId:"dark_dinu_session"
+      }).lean();
+
+    if(!data || !data.files){
+
+      console.log(
+        "ℹ️ No MongoDB WhatsApp session found"
+      );
+
+      return false;
+
+    }
+
+    deleteSessionDir();
+
+    ensureSessionDir();
+
+    const files =
+      data.files instanceof Map
+        ? Object.fromEntries(data.files)
+        : data.files;
+
+    let count = 0;
+
+    for(
+      const [fileName,content]
+      of Object.entries(files)
+    ){
+
+      const filePath =
+        path.join(
+          sessionDir,
+          fileName
+        );
+
+      const directory =
+        path.dirname(filePath);
+
+      if(!fs.existsSync(directory)){
+
+        fs.mkdirSync(
+          directory,
+          {
+            recursive:true
+          }
+        );
+
+      }
+
+      fs.writeFileSync(
+        filePath,
+        content,
+        "utf8"
+      );
+
+      count++;
+
+    }
+
+    console.log(
+      `✅ Restored ${count} session files from MongoDB`
+    );
+
+    return true;
+
+  }catch(error){
+
+    console.error(
+      "❌ MongoDB restore error:",
+      error
+    );
+
+    return false;
+
+  }
+
+}
+
+/* =========================================================
+   BACKUP SESSION TO MONGODB
+========================================================= */
+
+async function backupCredentials(){
+
+  if(backupRunning){
+
+    backupAgain = true;
+
+    return;
+
+  }
+
+  backupRunning = true;
+
+  try{
+
+    ensureSessionDir();
+
+    const files = {};
+
+    const allFiles =
+      fs.readdirSync(
+        sessionDir
+      );
+
+    for(
+      const fileName
+      of allFiles
+    ){
+
+      const filePath =
+        path.join(
+          sessionDir,
+          fileName
+        );
+
+      if(
+        fs.existsSync(filePath) &&
+        fs.statSync(filePath).isFile()
+      ){
+
+        files[fileName] =
+          fs.readFileSync(
+            filePath,
+            "utf8"
+          );
+
+      }
+
+    }
+
+    if(
+      Object.keys(files).length === 0
+    ){
+
+      return;
+
     }
 
     await SessionModel.findOneAndUpdate(
-      { sessionId: 'dark_dinu_session' },
-      { files: filesMap },
-      { upsert: true, new: true }
+
+      {
+        sessionId:
+          "dark_dinu_session"
+      },
+
+      {
+        $set:{
+          files
+        }
+      },
+
+      {
+        upsert:true,
+        new:true
+      }
+
     );
-    console.log('⚡ [DARK DINU] Session synced with MongoDB!');
-  } catch (e) {
-    console.error('Session backup error:', e);
+
+    console.log(
+      "💾 WhatsApp session backed up to MongoDB"
+    );
+
+  }catch(error){
+
+    console.error(
+      "❌ MongoDB backup error:",
+      error.message
+    );
+
+  }finally{
+
+    backupRunning = false;
+
+    if(backupAgain){
+
+      backupAgain = false;
+
+      setTimeout(
+        backupCredentials,
+        1000
+      );
+
+    }
+
   }
+
 }
 
-let activeSocket = null;
+/* =========================================================
+   CREATE WHATSAPP SOCKET
+========================================================= */
 
-async function requestPairCode(phoneNumber, onLoginSuccess) {
-  // පරණ socket එක සම්පූර්ණයෙන්ම terminate කිරීම
-  if (activeSocket) {
-    try { 
-      activeSocket.ev.removeAllListeners();
-      activeSocket.end(); 
-    } catch (e) {}
-    activeSocket = null;
-  }
+async function createSocket(
+  state,
+  saveCreds
+){
 
-  // පරණ session folder එක clear කිරීම
-  if (fs.existsSync(sessionDir)) {
-    fs.rmSync(sessionDir, { recursive: true, force: true });
-  }
-  fs.mkdirSync(sessionDir, { recursive: true });
+  const {
+    version
+  } =
+    await fetchLatestBaileysVersion();
 
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-  const { version } = await fetchLatestBaileysVersion();
-  const logger = pino({ level: 'silent' });
+  console.log(
+    "📦 Baileys version:",
+    version.join(".")
+  );
 
-  // Chrome on Mac OS signature (WhatsApp web protocol එකට හොඳින්ම ගැලපෙන signature එක)
-  activeSocket = makeWASocket({
-    version,
-    logger,
-    printQRInTerminal: false,
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger)
-    },
-    browser: Browsers.macOS('Chrome'),
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
-    connectTimeoutMs: 120000,
-    keepAliveIntervalMs: 10000,
-    defaultQueryTimeoutMs: 60000
-  });
+  const sock =
+    makeWASocket({
 
-  activeSocket.ev.on('creds.update', async () => {
-    await saveCreds();
-    await backupCredentials();
-  });
+      version,
 
-  activeSocket.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    
-    if (connection === 'open') {
-      console.log('🎉 [DARK DINU] WHATSAPP DEVICE LINKED & VERIFIED!');
-      await backupCredentials();
-      if (onLoginSuccess) onLoginSuccess(activeSocket);
-    } else if (connection === 'close') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      console.log('[DARK DINU] Connection close reason code:', statusCode);
-      if (statusCode === DisconnectReason.restartRequired) {
-        console.log('[DARK DINU] Stream restart required, holding connection...');
-      } else if (statusCode === DisconnectReason.loggedOut) {
-        console.log('[DARK DINU] Logged out from WhatsApp.');
+      logger,
+
+      auth:{
+        creds:state.creds,
+
+        keys:
+          makeCacheableSignalKeyStore(
+            state.keys,
+            logger
+          )
+      },
+
+      browser:
+        Browsers.macOS(
+          "Chrome"
+        ),
+
+      printQRInTerminal:false,
+
+      syncFullHistory:false,
+
+      markOnlineOnConnect:false,
+
+      generateHighQualityLinkPreview:false,
+
+      connectTimeoutMs:60000,
+
+      keepAliveIntervalMs:15000,
+
+      defaultQueryTimeoutMs:60000,
+
+      retryRequestDelayMs:2000,
+
+      emitOwnEvents:false,
+
+      fireInitQueries:true
+
+    });
+
+  activeSocket = sock;
+
+  /* =======================================================
+     CREDENTIAL UPDATES
+  ======================================================= */
+
+  sock.ev.on(
+    "creds.update",
+    async ()=>{
+      try{
+
+        await saveCreds();
+
+        setTimeout(
+          backupCredentials,
+          1000
+        );
+
+      }catch(error){
+
+        console.error(
+          "❌ Save creds error:",
+          error.message
+        );
+
       }
     }
-  });
+  );
 
-  const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+  /* =======================================================
+     CONNECTION UPDATE
+  ======================================================= */
 
-  // Handshake එක WhatsApp server එකට register වෙනකම් තත්පර 3ක් රැඳී සිටින්න
-  await delay(3000);
+  sock.ev.on(
+    "connection.update",
+    async(update)=>{
 
-  if (!activeSocket.authState.creds.registered) {
-    const code = await activeSocket.requestPairingCode(cleanNumber);
-    return code;
-  } else {
-    throw new Error('Device already registered.');
-  }
+      const {
+        connection,
+        lastDisconnect
+      } = update;
+
+      if(connection === "connecting"){
+
+        console.log(
+          "🔄 WhatsApp connecting..."
+        );
+
+      }
+
+      if(connection === "open"){
+
+        console.log(
+          "✅ WhatsApp connection OPEN"
+        );
+
+        await backupCredentials();
+
+      }
+
+      if(connection === "close"){
+
+        const statusCode =
+          lastDisconnect
+            ?.error
+            ?.output
+            ?.statusCode;
+
+        console.log(
+          "⚠️ WhatsApp connection closed."
+        );
+
+        console.log(
+          "Status:",
+          statusCode
+        );
+
+        if(
+          statusCode ===
+          DisconnectReason.loggedOut
+        ){
+
+          console.log(
+            "🚪 WhatsApp logged out."
+          );
+
+          return;
+
+        }
+
+        if(
+          statusCode ===
+          DisconnectReason.badSession
+        ){
+
+          console.log(
+            "❌ Bad WhatsApp session."
+          );
+
+          return;
+
+        }
+
+        if(
+          reconnectTimer
+        ){
+
+          return;
+
+        }
+
+        reconnectTimer =
+          setTimeout(
+            async()=>{
+
+              reconnectTimer = null;
+
+              try{
+
+                console.log(
+                  "🔄 Reconnecting WhatsApp..."
+                );
+
+                await createSocket(
+                  state,
+                  saveCreds
+                );
+
+              }catch(error){
+
+                console.error(
+                  "❌ Reconnect failed:",
+                  error.message
+                );
+
+              }
+
+            },
+            5000
+          );
+
+      }
+
+    }
+  );
+
+  return sock;
+
 }
 
+/* =========================================================
+   REQUEST PAIRING CODE
+========================================================= */
+
+async function requestPairCode(
+  phoneNumber
+){
+
+  if(
+    !mongoose.connection ||
+    mongoose.connection.readyState !== 1
+  ){
+
+    throw new Error(
+      "MongoDB is not connected"
+    );
+
+  }
+
+  /*
+    Close old socket before starting
+    a completely new pairing.
+  */
+
+  if(activeSocket){
+
+    try{
+
+      activeSocket.end(
+        undefined
+      );
+
+    }catch(error){}
+
+    activeSocket = null;
+
+  }
+
+  /*
+    New pairing means new local auth.
+  */
+
+  deleteSessionDir();
+
+  ensureSessionDir();
+
+  const {
+    state,
+    saveCreds
+  } =
+    await useMultiFileAuthState(
+      sessionDir
+    );
+
+  const sock =
+    await createSocket(
+      state,
+      saveCreds
+    );
+
+  /*
+    Baileys needs a little time
+    before requesting the code.
+  */
+
+  await new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        3000
+      )
+  );
+
+  const cleanNumber =
+    String(phoneNumber)
+      .replace(
+        /[^0-9]/g,
+        ""
+      );
+
+  console.log(
+    "📲 Requesting pairing code for:",
+    cleanNumber
+  );
+
+  let code;
+
+  try{
+
+    code =
+      await sock.requestPairingCode(
+        cleanNumber
+      );
+
+  }catch(error){
+
+    console.error(
+      "❌ Pairing code error:",
+      error
+    );
+
+    try{
+
+      sock.end(
+        undefined
+      );
+
+    }catch(e){}
+
+    throw error;
+
+  }
+
+  console.log(
+    "🔑 Pairing code:",
+    code
+  );
+
+  return {
+    code,
+    socket:sock
+  };
+
+}
+
+/* =========================================================
+   START SAVED SOCKET
+========================================================= */
+
+async function startSavedSocket(){
+
+  ensureSessionDir();
+
+  const credsFile =
+    path.join(
+      sessionDir,
+      "creds.json"
+    );
+
+  if(
+    !fs.existsSync(credsFile)
+  ){
+
+    console.log(
+      "ℹ️ creds.json not found."
+    );
+
+    return null;
+
+  }
+
+  const {
+    state,
+    saveCreds
+  } =
+    await useMultiFileAuthState(
+      sessionDir
+    );
+
+  const sock =
+    await createSocket(
+      state,
+      saveCreds
+    );
+
+  return sock;
+
+}
+
+/* =========================================================
+   EXPORT
+========================================================= */
+
 module.exports = {
-  requestPairCode,
-  restoreCredentials,
-  backupCredentials,
+
   sessionDir,
+
   SessionModel,
-  getActiveSocket: () => activeSocket
+
+  restoreCredentials,
+
+  backupCredentials,
+
+  requestPairCode,
+
+  startSavedSocket,
+
+  getActiveSocket:()=>{
+    return activeSocket;
+  }
+
 };
