@@ -1,6 +1,6 @@
 {
   "name": "dark-dinu",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "DARK DINU WhatsApp Bot with Web Pairing UI & MongoDB Session",
   "main": "index.js",
   "scripts": {
