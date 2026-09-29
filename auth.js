@@ -71,11 +71,16 @@ async function backupCredentials() {
 let activeSocket = null;
 
 async function requestPairCode(phoneNumber, onLoginSuccess) {
+  // පරණ socket එක සම්පූර්ණයෙන්ම terminate කිරීම
   if (activeSocket) {
-    try { activeSocket.end(); } catch (e) {}
+    try { 
+      activeSocket.ev.removeAllListeners();
+      activeSocket.end(); 
+    } catch (e) {}
     activeSocket = null;
   }
 
+  // පරණ session folder එක clear කිරීම
   if (fs.existsSync(sessionDir)) {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -83,8 +88,9 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
-  const logger = pino({ level: 'fatal' });
+  const logger = pino({ level: 'silent' });
 
+  // Chrome on Mac OS signature (WhatsApp web protocol එකට හොඳින්ම ගැලපෙන signature එක)
   activeSocket = makeWASocket({
     version,
     logger,
@@ -93,13 +99,12 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Ubuntu / Chrome browser signature - fixes datacenter handshake drops
-    browser: Browsers.ubuntu('Chrome'),
+    browser: Browsers.macOS('Chrome'),
     syncFullHistory: false,
     markOnlineOnConnect: false,
-    connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000,
-    defaultQueryTimeoutMs: 0
+    connectTimeoutMs: 120000,
+    keepAliveIntervalMs: 10000,
+    defaultQueryTimeoutMs: 60000
   });
 
   activeSocket.ev.on('creds.update', async () => {
@@ -116,6 +121,7 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       if (onLoginSuccess) onLoginSuccess(activeSocket);
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log('[DARK DINU] Connection close reason code:', statusCode);
       if (statusCode === DisconnectReason.restartRequired) {
         console.log('[DARK DINU] Stream restart required, holding connection...');
       } else if (statusCode === DisconnectReason.loggedOut) {
@@ -126,28 +132,15 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
 
   const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-  // Wait for the socket to properly initiate handshake
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Pairing code timeout. Please try again.'));
-    }, 20000);
+  // Handshake එක WhatsApp server එකට register වෙනකම් තත්පර 3ක් රැඳී සිටින්න
+  await delay(3000);
 
-    const onUpdate = async (update) => {
-      if (update.qr || (!activeSocket.authState.creds.registered && update.connection !== 'close')) {
-        activeSocket.ev.off('connection.update', onUpdate);
-        clearTimeout(timeout);
-        try {
-          await delay(1500);
-          const code = await activeSocket.requestPairingCode(cleanNumber);
-          resolve(code);
-        } catch (err) {
-          reject(err);
-        }
-      }
-    };
-
-    activeSocket.ev.on('connection.update', onUpdate);
-  });
+  if (!activeSocket.authState.creds.registered) {
+    const code = await activeSocket.requestPairingCode(cleanNumber);
+    return code;
+  } else {
+    throw new Error('Device already registered.');
+  }
 }
 
 module.exports = {
