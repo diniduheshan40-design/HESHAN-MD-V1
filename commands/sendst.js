@@ -26,7 +26,7 @@ module.exports = {
       //
       // ============================================================
 
-      const OWNER_NUMBER = "947XXXXXXXX";
+      const OWNER_NUMBER = "94719845166";
 
       const sender =
         msg.key?.participant ||
