@@ -8,9 +8,9 @@ module.exports = {
 
   // 🎨 Logo URLs (පාට 3)
   BOT_LOGOS: [
-    "https://i.ibb.co/your-red-logo.jpg",    // 🔴 1 වෙනි Logo එක
-    "https://i.ibb.co/your-blue-logo.jpg",   // 🔵 2 වෙනි Logo එක
-    "https://i.ibb.co/your-green-logo.jpg"   // 🟢 3 වෙනි Logo එක
+    "https://files.catbox.moe/3fxa4u.jpeg",    // 🔴 1 වෙනි Logo එක
+    "https://files.catbox.moe/koh9j8.jpeg",   // 🔵 2 වෙනි Logo එක
+    "https://files.catbox.moe/jz25of.jpeg"   // 🟢 3 වෙනි Logo එක
   ],
 
   // මාරුවෙන් මාරුවට logo තෝරන helper
