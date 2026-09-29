@@ -31,6 +31,11 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
+// In-Memory Global Session Storage for Song Format Selections
+if (!global.songSessions) {
+  global.songSessions = new Map();
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -192,7 +197,7 @@ function initBot(sock) {
     }
   });
 
-  // 2. Incoming Messages Listener (Prefix + Number Direct Reply Support)
+  // 2. Incoming Messages Listener (Prefix, Menu, & Song Format Select)
   sock.ev.on("messages.upsert", async (chatUpdate) => {
     try {
       if (!chatUpdate.messages || chatUpdate.messages.length === 0) return;
@@ -211,16 +216,66 @@ function initBot(sock) {
       const body = extractMessageBody(msg);
       if (!body) return;
 
-      // Prefix check (. / ! # /) athava bari number (1-6) select maduvudu
+      const reply = async (text) => {
+        return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
+      };
+
+      // =========================================================
+      // SONG SELECTION REPLY HANDLER (1: Audio, 2: Doc, 3: Voice)
+      // =========================================================
+      const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
+      const cleanBody = body.trim();
+
+      if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
+        const session = global.songSessions.get(quotedMsgId);
+
+        if (["1", "2", "3"].includes(cleanBody)) {
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+
+          try {
+            if (cleanBody === "1") {
+              // 1. Normal Audio (MP3)
+              await sock.sendMessage(from, {
+                audio: { url: session.url },
+                mimetype: "audio/mp4",
+                fileName: `${session.title}.mp3`
+              }, { quoted: msg });
+            } else if (cleanBody === "2") {
+              // 2. Document Format
+              await sock.sendMessage(from, {
+                document: { url: session.url },
+                mimetype: "audio/mpeg",
+                fileName: `${session.title}.mp3`
+              }, { quoted: msg });
+            } else if (cleanBody === "3") {
+              // 3. Voice Note (PTT)
+              await sock.sendMessage(from, {
+                audio: { url: session.url },
+                mimetype: "audio/ogg; codecs=opus",
+                ptt: true
+              }, { quoted: msg });
+            }
+
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            return;
+          } catch (sendErr) {
+            console.error("Song send error:", sendErr);
+            await reply("❌ Audio එක යැවීමේදී දෝෂයක් මතු විය.");
+            return;
+          }
+        }
+      }
+
+      // Prefix check (. / ! # /) හෝ Menu එක සඳහා වූ Number (1-6)
       const prefixes = [".", "!", "#", "/"];
       let prefix = prefixes.find(p => body.startsWith(p));
       let commandName = "";
       let args = [];
 
-      if (!prefix && ["1", "2", "3", "4", "5", "6"].includes(body.trim())) {
+      if (!prefix && ["1", "2", "3", "4", "5", "6"].includes(cleanBody)) {
         prefix = ".";
         commandName = "menu";
-        args = [body.trim()];
+        args = [cleanBody];
       } else if (prefix) {
         args = body.slice(prefix.length).trim().split(/ +/);
         commandName = args.shift().toLowerCase();
@@ -231,11 +286,6 @@ function initBot(sock) {
       if (!commandName) return;
 
       console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from}`);
-
-      // Universal Reply Helper
-      const reply = async (text) => {
-        return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
-      };
 
       // Search registered commands
       const targetCommand = getCommand(commandName);
