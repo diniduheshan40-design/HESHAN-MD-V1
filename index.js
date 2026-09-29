@@ -250,7 +250,7 @@ function initBot(sock) {
       const cleanBody = body.trim();
 
       // =========================================================
-      // DEVELOPER / OWNER PERMISSION CHECK
+      // DEVELOPER / OWNER PERMISSION CHECK (Supports Phone & LID)
       // =========================================================
       const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
       const isOwner = Boolean(
@@ -381,8 +381,13 @@ function initBot(sock) {
 
       if (global.aiAutoReply && !isCmd && !msg.key.fromMe) {
         try {
-          const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || botConfig.OPENROUTER_API_KEY;
-          const AI_MODEL = botConfig.AI_MODEL || "deepseek/deepseek-chat:free";
+          const OPENROUTER_KEY = 
+            process.env.OPENROUTER_API_KEY || 
+            botConfig.OPENROUTER_API_KEY || 
+            "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";
+
+          // Free සහ Fast Response සඳහා Gemini 2.0 Flash හෝ Deepseek fallback
+          const AI_MODEL = "google/gemini-2.0-flash-exp:free";
 
           if (OPENROUTER_KEY) {
             await sock.sendPresenceUpdate("composing", from);
@@ -411,10 +416,10 @@ Tone & Persona Rules:
                 headers: {
                   "Authorization": `Bearer ${OPENROUTER_KEY}`,
                   "Content-Type": "application/json",
-                  "HTTP-Referer": "https://github.com",
+                  "HTTP-Referer": "https://render.com",
                   "X-Title": "Dark Dinu WhatsApp Bot"
                 },
-                timeout: 15000
+                timeout: 12000
               }
             );
 
@@ -422,12 +427,15 @@ Tone & Persona Rules:
 
             if (replyText) {
               await sock.sendMessage(from, { text: replyText }, { quoted: msg });
-              return;
             }
+            await sock.sendPresenceUpdate("paused", from);
+            return;
           } else {
             console.warn("⚠️ OpenRouter Key එක හමු නොවීය.");
+            await sock.sendPresenceUpdate("paused", from);
           }
         } catch (aiErr) {
+          await sock.sendPresenceUpdate("paused", from);
           console.error("OpenRouter AI Error:", aiErr.response?.data || aiErr.message);
         }
       }
