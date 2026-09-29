@@ -2,7 +2,7 @@ require("dotenv").config();
 
 module.exports = {
   // 🔑 OpenRouter API Configuration
-  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || "",
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || "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",
   // නොමිලේ දෙන සුපිරි models: "deepseek/deepseek-chat:free" හෝ "google/gemini-2.0-flash-exp:free"
   AI_MODEL: "deepseek/deepseek-chat:free",
 
