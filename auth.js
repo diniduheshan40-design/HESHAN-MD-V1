@@ -21,13 +21,13 @@ let reconnectTimer = null;
 let onSocketCreatedCallback = null;
 
 /* =========================================================
-   MONGODB SESSION MODEL
+   MONGODB SESSION MODEL (Mixed for 100% Safe JSON Storage)
 ========================================================= */
 
 const SessionSchema = new mongoose.Schema(
   {
     sessionId: { type: String, unique: true, required: true },
-    files: { type: Map, of: String, default: {} }
+    files: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
   { timestamps: true }
 );
@@ -42,25 +42,35 @@ function ensureSessionDir() {
   }
 }
 
+function deleteSessionDir() {
+  if (fs.existsSync(sessionDir)) {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+}
+
 /* =========================================================
-   RESTORE FROM MONGODB (STARTUP)
+   RESTORE FROM MONGODB
 ========================================================= */
 
 async function restoreCredentials() {
   ensureSessionDir();
   try {
     const data = await SessionModel.findOne({ sessionId: "dark_dinu_session" }).lean();
-    if (!data || !data.files) {
+    if (!data || !data.files || Object.keys(data.files).length === 0) {
       console.log("ℹ️ [SESSION] No saved session found in MongoDB.");
       return false;
     }
 
-    const files = data.files instanceof Map ? Object.fromEntries(data.files) : data.files;
-    let count = 0;
+    deleteSessionDir();
+    ensureSessionDir();
 
-    for (const [fileName, content] of Object.entries(files)) {
+    let count = 0;
+    for (const [key, content] of Object.entries(data.files)) {
+      // Revert sanitized filename back
+      const fileName = key.replace(/___dot___/g, ".");
       const filePath = path.join(sessionDir, fileName);
       const dir = path.dirname(filePath);
+
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(filePath, content, "utf8");
       count++;
@@ -75,18 +85,8 @@ async function restoreCredentials() {
 }
 
 /* =========================================================
-   IMMEDIATE BACKUP TO MONGODB (SAFE & CRASH PROOF)
+   BACKUP ALL CREDENTIALS TO MONGODB
 ========================================================= */
-
-async function backupSingleFile(fileName, content) {
-  try {
-    await SessionModel.findOneAndUpdate(
-      { sessionId: "dark_dinu_session" },
-      { $set: { [`files.${fileName.replace(/\./g, "_")}`]: content } },
-      { upsert: true }
-    );
-  } catch (e) {}
-}
 
 async function backupAllCredentials() {
   try {
@@ -97,8 +97,9 @@ async function backupAllCredentials() {
     for (const fileName of allFiles) {
       const filePath = path.join(sessionDir, fileName);
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        // Mongo keys can't have dots in some versions
-        files[fileName.replace(/\./g, "_")] = fs.readFileSync(filePath, "utf8");
+        // Mongo safe key encoding
+        const safeKey = fileName.replace(/\./g, "___dot___");
+        files[safeKey] = fs.readFileSync(filePath, "utf8");
       }
     }
 
@@ -107,7 +108,7 @@ async function backupAllCredentials() {
     await SessionModel.findOneAndUpdate(
       { sessionId: "dark_dinu_session" },
       { $set: { files } },
-      { upsert: true }
+      { upsert: true, new: true }
     );
   } catch (err) {
     console.error("❌ Backup error:", err.message);
@@ -139,7 +140,6 @@ async function createSocket(state, saveCreds) {
 
   activeSocket = sock;
 
-  // Credential එකක් ආපු ගමන් එසැනින් MongoDB backup වෙනවා
   sock.ev.on("creds.update", async () => {
     try {
       await saveCreds();
@@ -159,14 +159,13 @@ async function createSocket(state, saveCreds) {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       console.log(`⚠️ Connection closed. Status Code: ${statusCode}`);
 
-      // Logged out උනොත් විතරක් session delete කරනවා
       if (statusCode === DisconnectReason.loggedOut) {
         console.log("🚪 Logged out from WhatsApp.");
         await SessionModel.deleteOne({ sessionId: "dark_dinu_session" }).catch(()=>{});
+        deleteSessionDir();
         return;
       }
 
-      // Render Deploy / Network drop එකකදී Auto Reconnect වීම
       if (!reconnectTimer) {
         reconnectTimer = setTimeout(async () => {
           reconnectTimer = null;
@@ -177,7 +176,7 @@ async function createSocket(state, saveCreds) {
           } catch (e) {
             console.error("Auto-reconnect error:", e.message);
           }
-        }, 3000);
+        }, 4000);
       }
     }
   });
@@ -190,7 +189,7 @@ async function createSocket(state, saveCreds) {
 }
 
 /* =========================================================
-   PAIR CODE & SAVED SOCKET
+   REQUEST PAIR CODE
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
@@ -199,6 +198,7 @@ async function requestPairCode(phoneNumber) {
     activeSocket = null;
   }
 
+  deleteSessionDir();
   ensureSessionDir();
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
@@ -211,10 +211,13 @@ async function requestPairCode(phoneNumber) {
   return { code, socket: sock };
 }
 
+/* =========================================================
+   START SAVED SOCKET
+========================================================= */
+
 async function startSavedSocket() {
   ensureSessionDir();
 
-  // MongoDB එකෙන් Restore කරපු creds file එක බලනවා
   const credsFile = path.join(sessionDir, "creds.json");
   if (!fs.existsSync(credsFile)) return null;
 
