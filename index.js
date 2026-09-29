@@ -12,6 +12,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
+const https = require("https");
 
 const {
   restoreCredentials,
@@ -480,14 +482,16 @@ app.get("/pair", async (req, res) => {
   }
 });
 
+// UptimeRobot සහ Self Ping සඳහා Health Check Endpoint එක
 app.get("/health", (req, res) => {
-  res.json({
+  res.status(200).json({
     status: "online",
     bot: "DARK DINU MD",
     developer: DEVELOPER_NAME,
-    loaded_commands: Array.from(commands.keys()),
+    loaded_commands: Array.from(commands.keys()).length,
     mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-    whatsapp: activeSocket ? "active" : "not-connected"
+    whatsapp: activeSocket ? "active" : "not-connected",
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -495,6 +499,20 @@ async function start() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 DARK DINU WEB SERVER RUNNING ON PORT: ${PORT}`);
   });
+
+  // Self-Ping mechanism to stop cloud spin-down (Render/Koyeb)
+  const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
+  if (appUrl) {
+    console.log(`⏱️ Self-ping scheduled for: ${appUrl}`);
+    setInterval(() => {
+      const client = appUrl.startsWith("https") ? https : http;
+      client.get(`${appUrl}/health`, (res) => {
+        console.log(`[PING] Keep-alive status: ${res.statusCode}`);
+      }).on("error", (e) => {
+        console.warn("[PING] Keep-alive warning:", e.message);
+      });
+    }, 8 * 60 * 1000); // සෑම විනාඩි 8කට වරක් self ping වේ
+  }
 
   try {
     console.log("🔄 Connecting to MongoDB...");
