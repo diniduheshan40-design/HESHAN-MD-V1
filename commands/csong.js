@@ -4,14 +4,14 @@ const axios = require("axios");
 module.exports = {
   name: "csong",
   alias: ["channelsong", "cplay"],
-  desc: "Send Song Card & Playable Voice Note to WhatsApp Channel",
+  desc: "Send Song Card & Voice Note directly to WhatsApp Channel",
   async execute(sock, msg, args, from, { reply, prefix }) {
     try {
       const fullText = args.join(" ");
       const parts = fullText.split(",");
 
       if (parts.length < 2) {
-        return await reply(`⚠️ *භාවිතය:*\n*${prefix}csong <channel_link> , <song_name>*\n\n*උදාහරණ:*\n${prefix}csong https://whatsapp.com/channel/0029VaXXXXX , Maa Dihaa`);
+        return await reply(`⚠️ *භාවිතය:*\n*${prefix}csong <channel_link> , <song_name>*\n\n*උදාහරණ:*\n${prefix}csong https://whatsapp.com/channel/0029VaXXXXX , kuweniye`);
       }
 
       const channelLink = parts[0].trim();
@@ -28,7 +28,7 @@ module.exports = {
       const channelJid = channelMeta.id;
 
       if (!channelJid) {
-        return await reply("❌ Channel එක සොයාගත නොහැකි විය. Bot ට Channel Admin බලතල තියෙනවද බලන්න.");
+        return await reply("❌ Channel එක සොයාගත නොහැකි විය. Bot ට Channel එකේ Admin බලතල තියෙනවද බලන්න.");
       }
 
       // 1. YouTube Search
@@ -36,34 +36,59 @@ module.exports = {
       const video = search.videos[0];
       if (!video) return await reply("❌ සින්දුව සොයාගත නොහැකි විය.");
 
-      // 2. High-speed direct MP3 Audio Source
-      let audioUrl = null;
+      // 2. High Reliability Multi-Engine YouTube MP3 Download
+      let audioBuffer = null;
 
+      // Method 1: gifted-dls (Local dependency)
       try {
-        const res = await axios.get(`https://bk9.fun/download/youtube?url=${encodeURIComponent(video.url)}`, { timeout: 15000 });
-        audioUrl = res.data?.BK9?.BK8 || res.data?.BK9?.BK2;
+        const { ytmp3 } = require("gifted-dls");
+        const dl = await ytmp3(video.url);
+        const dlUrl = dl?.download_url || dl?.url;
+        if (dlUrl) {
+          const res = await axios.get(dlUrl, { responseType: "arraybuffer", timeout: 35000 });
+          audioBuffer = Buffer.from(res.data);
+        }
       } catch (e) {}
 
-      if (!audioUrl) {
+      // Method 2: Cobadownload / Cobalt public API fallback
+      if (!audioBuffer) {
         try {
-          const res2 = await axios.get(`https://api.giftedtech.my.id/api/download/ytmp3?apikey=gifted&url=${encodeURIComponent(video.url)}`, { timeout: 15000 });
-          audioUrl = res2.data?.result?.download_url;
+          const resCobalt = await axios.post("https://api.cobalt.tools/api/json", {
+            url: video.url,
+            downloadMode: "audio",
+            audioFormat: "mp3"
+          }, {
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            timeout: 20000
+          });
+
+          if (resCobalt.data?.url) {
+            const res = await axios.get(resCobalt.data.url, { responseType: "arraybuffer", timeout: 35000 });
+            audioBuffer = Buffer.from(res.data);
+          }
         } catch (e) {}
       }
 
-      if (!audioUrl) return await reply("❌ Audio සේවාව කාර්යබහුලයි. සුළු වේලාවකින් නැවත උත්සාහ කරන්න.");
+      // Method 3: Siputzx YouTube Audio Engine
+      if (!audioBuffer) {
+        try {
+          const resSiput = await axios.get(`https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(video.url)}`, { timeout: 20000 });
+          const dlUrl = resSiput.data?.data?.dl;
+          if (dlUrl) {
+            const res = await axios.get(dlUrl, { responseType: "arraybuffer", timeout: 35000 });
+            audioBuffer = Buffer.from(res.data);
+          }
+        } catch (e) {}
+      }
 
-      // 3. Audio එක Buffer එකක් ලෙස Download කර ගැනීම (File Error එක සම්පූර්ණයෙන් නැති කිරීමට)
-      const audioResponse = await axios.get(audioUrl, {
-        responseType: "arraybuffer",
-        timeout: 30000,
-        headers: {
-          "User-Agent": "Mozilla/5.0"
-        }
-      });
-      const audioBuffer = Buffer.from(audioResponse.data);
+      if (!audioBuffer) {
+        return await reply("❌ සින්දුව download කරගැනීමට නොහැකි විය. වෙනත් සින්දුවක නමක් ලබාදෙන්න.");
+      }
 
-      // 4. Card එක Channel එකට යැවීම
+      // 3. Card එකේ Caption එක
       const cardCaption = 
 `🎶 *“ ${video.title} ”*
 
@@ -73,12 +98,13 @@ Use Headphones For Best Experience.... 🎧🎵
 
 | ⚡ *HESHAN MD*`;
 
+      // 4. STEP 1: Image Card එක Channel එකට යැවීම
       await sock.sendMessage(channelJid, {
         image: { url: video.thumbnail },
         caption: cardCaption
       });
 
-      // 5. Playable Voice Note (PTT) එක Channel එකට යැවීම
+      // 5. STEP 2: Error-free Voice Note (PTT) එක Channel එකට යැවීම
       await sock.sendMessage(channelJid, {
         audio: audioBuffer,
         mimetype: "audio/mp4",
