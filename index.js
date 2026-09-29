@@ -37,6 +37,7 @@ const PORT = process.env.PORT || 3000;
 // Developer Configuration
 const DEVELOPER_NAME = "DINIDU HESHAN";
 const DEVELOPER_NUMBER = "94719845166";
+const DEVELOPER_LID = "15947733680169"; // WhatsApp Linked ID (LID)
 
 const MONGO_URI =
   process.env.MONGO_URI ||
@@ -249,6 +250,18 @@ function initBot(sock) {
       const cleanBody = body.trim();
 
       // =========================================================
+      // DEVELOPER / OWNER PERMISSION CHECK
+      // =========================================================
+      const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
+      const isOwner = Boolean(
+        msg.key.fromMe ||
+        senderClean === DEVELOPER_NUMBER ||
+        senderClean === DEVELOPER_LID ||
+        sender?.includes(DEVELOPER_NUMBER) ||
+        sender?.includes(DEVELOPER_LID)
+      );
+
+      // =========================================================
       // SONG SELECTION REPLY HANDLER (1: Audio, 2: Doc, 3: Voice)
       // =========================================================
       if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
@@ -345,8 +358,7 @@ function initBot(sock) {
       // .ai on / .ai off BUILT-IN COMMAND CONTROLLER
       // =========================================================
       if (commandName === "ai") {
-        const senderClean = sender.split("@")[0].replace(/[^0-9]/g, "");
-        if (senderClean !== DEVELOPER_NUMBER) {
+        if (!isOwner) {
           return await reply("⚠️ මෙම විධානය භාවිතා කළ හැක්කේ Bot Owner හට පමණි.");
         }
 
@@ -432,10 +444,12 @@ Tone & Persona Rules:
             body,
             prefix,
             sender,
+            isOwner,
             isGroup,
             reply,
             DEVELOPER_NAME,
             DEVELOPER_NUMBER,
+            DEVELOPER_LID,
             botConfig
           });
         } catch (cmdErr) {
