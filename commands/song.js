@@ -1,3 +1,4 @@
+const yts = require("yt-search");
 const youtubedl = require("youtube-dl-exec");
 const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
 const fs = require("fs");
@@ -11,37 +12,28 @@ module.exports = {
     try {
       const query = args.join(" ").trim();
       if (!query) {
-        return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song Neth Manema\``);
+        return await reply(`⚠️ කරුණාකර සින්දුවේ නම හෝ YouTube Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}song kuweniye\``);
       }
 
-      // Reaction: සොයමින් පවතින බව දැක්වීමට
-      await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-      // 1. YouTube Search & Metadata ලබා ගැනීම
-      const searchTarget = query.startsWith("http") ? query : `ytsearch1:${query}`;
-      
-      const info = await youtubedl(searchTarget, {
-        dumpSingleJson: true,
-        noWarnings: true,
-        noCheckCertificates: true,
-        preferFreeFormats: true,
-        youtubeSkipDashManifest: true
-      });
+      // 1. YouTube Search එක yt-search එකෙන් කරගන්නවා (YouTube Bot Block නොවී තොරතුරු ගන්න)
+      const search = await yts(query);
+      const video = search.videos[0];
 
-      const video = info.entries ? info.entries[0] : info;
-      if (!video || !video.title) {
+      if (!video) {
         return await reply("❌ සින්දුව සොයාගැනීමට නොහැකි විය. කරුණාකර වෙනත් නමක් ලබාදෙන්න.");
       }
 
       const title = video.title;
-      const duration = video.duration_string || "Unknown";
-      const views = Number(video.view_count || 0).toLocaleString();
-      const uploader = video.uploader || "Unknown Artist";
-      const uploadYear = (video.upload_date || "").substring(0, 4) || "N/A";
+      const duration = video.timestamp || "Unknown";
+      const views = Number(video.views || 0).toLocaleString();
+      const artist = video.author?.name || "Unknown Artist";
+      const uploadYear = video.ago || "N/A";
       const thumbnail = video.thumbnail;
-      const videoUrl = video.webpage_url || `https://www.youtube.com/watch?v=${video.id}`;
+      const videoUrl = video.url;
 
-      // 2. Card Design එක සකස් කිරීම
+      // 2. Card Design එක
       const songCard = 
 `╔════════════════════════╗
    ⚔️ 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐒𝐎𝐍𝐆 ⚔️
@@ -50,13 +42,12 @@ module.exports = {
  │ 🎵 ᴛɪᴛʟᴇ : ${title}
  │ ⏱️ ᴅᴜʀᴀᴛɪᴏɴ : ${duration}
  │ 👁️ ᴠɪᴇᴡs : ${views}
- │ 👤 ᴀʀᴛɪsᴛ : ${uploader}
+ │ 👤 ᴀʀᴛɪsᴛ : ${artist}
  │ 📡 ᴜᴘʟᴏᴀᴅ : ${uploadYear}
  └───────────────────────
  > ⏳ *Uploading your audio...*
- > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴᴜ ᴛᴇᴄʜ 🩸`;
+ > ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀʀᴋ ᴅɪɴ𝐔 ᴛᴇᴄʜ 🩸`;
 
-      // Thumbnail එක සහිතව Card එක යැවීම
       if (thumbnail) {
         await sock.sendMessage(from, {
           image: { url: thumbnail },
@@ -66,10 +57,9 @@ module.exports = {
         await reply(songCard);
       }
 
-      // Reaction: Download වන බව දැක්වීමට
       await sock.sendMessage(from, { react: { text: "⬇️", key: msg.key } });
 
-      // 3. Audio එක MP3 ලෙස Download කිරීම
+      // 3. Audio එක Download කිරීම (Android/iOS Client Bypass එකක් සහිතව)
       const tempFileName = `song_${Date.now()}.mp3`;
       const tempFilePath = path.join(__dirname, tempFileName);
 
@@ -78,7 +68,13 @@ module.exports = {
         audioFormat: "mp3",
         ffmpegLocation: ffmpegPath,
         output: tempFilePath,
-        noWarnings: true
+        noWarnings: true,
+        noCheckCertificates: true,
+        // Cloud Block එක Bypass කිරීම සඳහා
+        extractorArgs: "youtube:player_client=android,web",
+        addHeader: [
+          "user-agent:Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        ]
       });
 
       // 4. WhatsApp එකට Audio එක යැවීම
@@ -91,10 +87,9 @@ module.exports = {
           fileName: `${title}.mp3`
         }, { quoted: msg });
 
-        // Reaction: සාර්ථකව අවසන් වූ බව
         await sock.sendMessage(from, { react: { text: "🎧", key: msg.key } });
 
-        // Temp file එක ඉවත් කිරීම
+        // Clean up temp file
         fs.unlinkSync(tempFilePath);
       } else {
         await reply("❌ Audio conversion failed.");
