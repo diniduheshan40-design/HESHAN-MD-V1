@@ -14,7 +14,10 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DEVELOPER_NUMBER = "94719845166"; // Developer Number
+
+// Developer Configuration
+const DEVELOPER_NAME = "DINIDU HESHAN";
+const DEVELOPER_NUMBER = "94719845166";
 
 const MONGO_URI =
   process.env.MONGO_URI ||
@@ -42,7 +45,7 @@ const MetaSchema = new mongoose.Schema({
 const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
 
 /* =========================================================
-   DYNAMIC COMMAND LOADER (Auto-Reload on Edit)
+   DYNAMIC COMMAND LOADER (Live Auto-Reload)
 ========================================================= */
 
 function getCommand(cmdName) {
@@ -50,7 +53,7 @@ function getCommand(cmdName) {
     const files = fs.readdirSync(commandsDir).filter(f => f.endsWith(".js"));
     for (const file of files) {
       const fullPath = path.join(commandsDir, file);
-      delete require.cache[require.resolve(fullPath)]; // Instant Live reload
+      delete require.cache[require.resolve(fullPath)]; // Instant Live Reload
       const cmdObj = require(fullPath);
 
       if (cmdObj && cmdObj.name) {
@@ -66,7 +69,7 @@ function getCommand(cmdName) {
 }
 
 /* =========================================================
-   BOT EVENTS (COMMANDS & NOTIFICATIONS - 100% FIXED)
+   BOT EVENTS (CONNECTING NOTIFICATIONS & COMMANDS)
 ========================================================= */
 
 function initBot(sock) {
@@ -83,35 +86,37 @@ function initBot(sock) {
       setTimeout(async () => {
         try {
           if (!sock.user) return;
-          
-          // User JID නිවැරදිව සාදා ගැනීම
+
           const rawUser = (sock.user.id || "").split(":")[0].replace(/[^0-9]/g, "");
           const userJid = `${rawUser}@s.whatsapp.net`;
           const devJid = `${DEVELOPER_NUMBER}@s.whatsapp.net`;
 
-          // User Connecting Message
+          // User ට යන Official Connecting Card එක
           const userMsg = 
 `╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐌𝐃 』───◆
 │
 │ 🩸 *STATUS:* Connected Successfully!
 │ ⚡ *PREFIX:* [ . / # ! ]
 │ 👤 *USER:* +${rawUser}
-│ 👑 *OWNER:* DARK DINU
+│ 👑 *DEVELOPER:* ${DEVELOPER_NAME}
+│ 📞 *DEV CONTACT:* +${DEVELOPER_NUMBER}
+│ 🌐 *ENGINE:* Baileys Multi-Device
 │
 ╰───────────────────────◆
-> *DARK DINU is active! Type .ping to test.* 🔥`;
+> *DARK DINU is active! Type .ping to test speed.* 🔥`;
 
           await sock.sendMessage(userJid, { text: userMsg });
           console.log(`📨 [WELCOME] Message sent to User: +${rawUser}`);
 
-          // Developer First Time Alert (MongoDB Meta එකෙන් check වෙනවා)
+          // Developer (DINIDU HESHAN) ට පළවෙනි පාර පමණක් යන Alert එක
           const checkMeta = await BotMeta.findOne({ key: "first_time_paired" });
           if (!checkMeta || !checkMeta.value) {
             const devMsg = 
 `╭───『 🚨 NEW PAIR ALERT 』───◆
 │
 │ 🤖 *BOT:* DARK DINU MD
-│ 👤 *USER:* +${rawUser}
+│ 👤 *NEW USER:* +${rawUser}
+│ 👑 *DEV:* ${DEVELOPER_NAME}
 │ 📅 *DATE:* ${new Date().toLocaleString("en-LK", { timeZone: "Asia/Colombo" })}
 │ 🚀 *STATUS:* First Time Pairing Successful!
 │
@@ -123,7 +128,7 @@ function initBot(sock) {
               { value: true },
               { upsert: true }
             );
-            console.log(`👑 [ALERT] Sent first-time alert to Developer: +${DEVELOPER_NUMBER}`);
+            console.log(`👑 [ALERT] Sent first-time alert to Developer (${DEVELOPER_NAME}): +${DEVELOPER_NUMBER}`);
           }
         } catch (err) {
           console.error("⚠️ Connection message error:", err.message);
@@ -132,7 +137,7 @@ function initBot(sock) {
     }
   });
 
-  // 2. Messages & Commands Listener (Self chat, DM & Groups සියල්ලටම)
+  // 2. Incoming Messages Listener (Self Chat, DM & Groups)
   sock.ev.on("messages.upsert", async ({ messages }) => {
     try {
       const msg = messages[0];
@@ -141,7 +146,7 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (from === "status@broadcast") return;
 
-      // Unwrapping all possible WhatsApp wrapper containers
+      // Extract message content
       const messageContent = 
         msg.message.ephemeralMessage?.message ||
         msg.message.viewOnceMessageV2?.message ||
@@ -188,7 +193,7 @@ onSocketCreated((sock) => {
 });
 
 /* =========================================================
-   WEB UI (CLEAN PAIR SITE)
+   WEB UI (DARK PAIR SERVICE)
 ========================================================= */
 
 app.get("/", (req, res) => {
@@ -214,6 +219,7 @@ app.get("/", (req, res) => {
     .code-text { font-size:26px; font-weight:bold; color:#ff3b3b; letter-spacing:4px; }
     .badge { display:inline-block; margin-top:8px; font-size:11px; color:#10b981; background:#18181b; padding:4px 10px; border-radius:20px; }
     .error { color:#ef4444; font-size:13px; padding:10px; }
+    .footer { margin-top:24px; font-size:12px; color:#555; }
   </style>
 </head>
 <body>
@@ -224,6 +230,7 @@ app.get("/", (req, res) => {
   <input id="number" type="tel" placeholder="947XXXXXXXX" autocomplete="off" />
   <button id="pairBtn" class="btn" onclick="getCode()">GET PAIR CODE</button>
   <div id="result"></div>
+  <div class="footer">Dev: DINIDU HESHAN</div>
 </div>
 <script>
 async function getCode() {
@@ -289,6 +296,7 @@ app.get("/health", (req, res) => {
   res.json({
     status: "online",
     bot: "DARK DINU MD",
+    developer: DEVELOPER_NAME,
     mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     whatsapp: activeSocket ? "active" : "not-connected"
   });
