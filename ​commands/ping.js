@@ -1,105 +1,76 @@
 module.exports = {
-  name: 'ping',
-  alias: ['speed', 'p'],
-
-  desc: 'DARK DINU speed testing',
+  name: "ping",
+  alias: ["speed", "p"],
+  desc: "DARK DINU speed testing",
 
   async execute(sock, msg, args, chatJid) {
+    const jid = chatJid || msg.key.remoteJid;
+
     try {
-      // Target chat
-      const targetJid = chatJid || msg.key.remoteJid;
+      // 🚀 Start reaction
+      await sock.sendMessage(jid, {
+        react: {
+          text: "🚀",
+          key: msg.key
+        }
+      }).catch(() => {});
 
-      if (!targetJid) {
-        return;
-      }
-
-      // Start timer
+      // Start time
       const start = Date.now();
 
-      // 🚀 Initial reaction
-      await sock.sendMessage(targetJid, {
-        react: {
-          text: '🚀',
-          key: msg.key
-        }
-      }).catch(() => {});
-
-      // Send testing message
-      let sentMessage = null;
-
-      try {
-        sentMessage = await sock.sendMessage(
-          targetJid,
-          {
-            text: '⚡ *Testing speed...*'
-          },
-          {
-            quoted: msg
-          }
-        );
-      } catch (error) {
-        sentMessage = await sock.sendMessage(targetJid, {
-          text: '⚡ *Testing speed...*'
-        });
-      }
-
-      // Calculate latency
-      const latency = Date.now() - start;
-
-      const finalReply =
-        `*pong ${latency}ms 🔥*`;
-
-      // ⚡ Change reaction
-      await sock.sendMessage(targetJid, {
-        react: {
-          text: '⚡',
-          key: msg.key
-        }
-      }).catch(() => {});
-
-      // Edit original message
-      if (sentMessage && sentMessage.key) {
-        try {
-          await sock.sendMessage(targetJid, {
-            text: finalReply,
-            edit: sentMessage.key
-          });
-
-          return;
-        } catch (editError) {
-          console.log(
-            '⚠️ Message edit failed:',
-            editError.message
-          );
-        }
-      }
-
-      // Fallback reply
-      await sock.sendMessage(
-        targetJid,
+      // Testing message
+      const sent = await sock.sendMessage(
+        jid,
         {
-          text: finalReply
+          text: "⚡ *Testing speed...*"
         },
         {
           quoted: msg
         }
       );
 
-    } catch (error) {
-      console.error(
-        '❌ Ping command error:',
-        error.message
-      );
+      // Calculate ping
+      const ping = Date.now() - start;
 
-      // Final fallback
-      const fallbackJid =
-        chatJid || msg.key.remoteJid;
+      // ⚡ Reaction
+      await sock.sendMessage(jid, {
+        react: {
+          text: "⚡",
+          key: msg.key
+        }
+      }).catch(() => {});
 
-      if (fallbackJid) {
-        await sock.sendMessage(fallbackJid, {
-          text: '*pong! DARK DINU is active 🔥*'
-        }).catch(() => {});
+      // Try edit
+      try {
+        await sock.sendMessage(jid, {
+          text: `*pong ${ping}ms 🔥*`,
+          edit: sent.key
+        });
+      } catch (editError) {
+        // If edit doesn't work, send new message
+        await sock.sendMessage(
+          jid,
+          {
+            text: `*pong ${ping}ms 🔥*`
+          },
+          {
+            quoted: msg
+          }
+        );
       }
+
+    } catch (error) {
+      console.error("❌ PING ERROR:", error);
+
+      await sock.sendMessage(
+        jid,
+        {
+          text: "*pong! DARK DINU is active 🔥*"
+        },
+        {
+          quoted: msg
+        }
+      ).catch(() => {});
     }
   }
 };
