@@ -42,7 +42,7 @@ async function restoreCredentials() {
   }
 }
 
-// Backup session to MongoDB (Fixed: Dots sanitized)
+// Backup session to MongoDB
 async function backupCredentials() {
   try {
     if (!fs.existsSync(sessionDir)) return;
@@ -72,9 +72,7 @@ let activeSocket = null;
 
 async function requestPairCode(phoneNumber, onLoginSuccess) {
   if (activeSocket) {
-    try { 
-      activeSocket.end(); 
-    } catch (e) {}
+    try { activeSocket.end(); } catch (e) {}
     activeSocket = null;
   }
 
@@ -95,8 +93,8 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Desktop signature bypass for cloud hosts
-    browser: Browsers.macOS('Desktop'),
+    // Ubuntu / Chrome browser signature - fixes datacenter handshake drops
+    browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
     markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
@@ -127,14 +125,29 @@ async function requestPairCode(phoneNumber, onLoginSuccess) {
   });
 
   const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-  await delay(2000);
 
-  if (!activeSocket.authState.creds.registered) {
-    const code = await activeSocket.requestPairingCode(cleanNumber);
-    return code;
-  } else {
-    throw new Error('Device already registered.');
-  }
+  // Wait for the socket to properly initiate handshake
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Pairing code timeout. Please try again.'));
+    }, 20000);
+
+    const onUpdate = async (update) => {
+      if (update.qr || (!activeSocket.authState.creds.registered && update.connection !== 'close')) {
+        activeSocket.ev.off('connection.update', onUpdate);
+        clearTimeout(timeout);
+        try {
+          await delay(1500);
+          const code = await activeSocket.requestPairingCode(cleanNumber);
+          resolve(code);
+        } catch (err) {
+          reject(err);
+        }
+      }
+    };
+
+    activeSocket.ev.on('connection.update', onUpdate);
+  });
 }
 
 module.exports = {
