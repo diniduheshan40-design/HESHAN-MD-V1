@@ -88,7 +88,7 @@ async function restoreCredentials() {
 }
 
 /* =========================================================
-   BACKUP ALL CREDENTIALS TO MONGODB (IMMEDIATE ON SAVE)
+   BACKUP ALL CREDENTIALS TO MONGODB
 ========================================================= */
 
 async function backupAllCredentials() {
@@ -142,14 +142,14 @@ async function createSocket(isPairing = false) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // macOS Desktop Signature — WhatsApp Web Handshake එක Drop නොවී කෙලින්ම Connect වේ
-    browser: Browsers.macOS("Desktop"),
+    // Real Windows Chrome desktop bypass signature
+    browser: Browsers.windows("Chrome"),
     printQRInTerminal: false,
     syncFullHistory: false,
     markOnlineOnConnect: false,
-    connectTimeoutMs: 120000,
-    keepAliveIntervalMs: 10000,
-    defaultQueryTimeoutMs: 60000
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 15000,
+    defaultQueryTimeoutMs: 0
   });
 
   activeSocket = sock;
@@ -167,7 +167,7 @@ async function createSocket(isPairing = false) {
     if (connection === "open") {
       isReconnecting = false;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      console.log("\x1b[32m%s\x1b[0m", "🟢 [SOCKET] WhatsApp Device Successfully Paired & Live!");
+      console.log("\x1b[32m%s\x1b[0m", "🟢 [SOCKET] WhatsApp Stream Stabilized & Paired!");
       await backupAllCredentials();
     }
 
@@ -208,7 +208,7 @@ async function createSocket(isPairing = false) {
 }
 
 /* =========================================================
-   REQUEST PAIR CODE (FAST & NO-HANG ENGINE)
+   REQUEST PAIR CODE (RE-ENGINEERED WITH HANDSHAKE WAIT)
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
@@ -221,22 +221,41 @@ async function requestPairCode(phoneNumber) {
   const sock = await createSocket(true);
   const cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
 
-  // Socket එක WhatsApp WebSocket එකත් සමග initial handshake එක සම්පූර්ණ කරන තෙක් තත්පර 3ක් ඉන්නවා
-  await delay(3000);
+  // Socket එක connect වී QR event එක හෝ pairing ready state එකට එන තෙක් රැඳී සිටීම
+  return new Promise((resolve, reject) => {
+    let handled = false;
 
-  if (!sock.authState.creds.registered) {
-    try {
-      const code = await sock.requestPairingCode(cleanNumber);
-      isReconnecting = false;
-      return { code, socket: sock };
-    } catch (err) {
-      isReconnecting = false;
-      throw err;
-    }
-  } else {
-    isReconnecting = false;
-    throw new Error("Device already registered. Try again.");
-  }
+    const timeout = setTimeout(() => {
+      if (!handled) {
+        handled = true;
+        isReconnecting = false;
+        reject(new Error("Pairing code timeout. Please click GET PAIR CODE again."));
+      }
+    }, 20000);
+
+    const onUpdate = async (update) => {
+      if (handled) return;
+
+      // QR එක trigger වීම යනු socket එක WhatsApp cloud එක සමග ready බවයි
+      if (update.qr || (!sock.authState.creds.registered && update.connection !== "close")) {
+        sock.ev.off("connection.update", onUpdate);
+        clearTimeout(timeout);
+        handled = true;
+
+        try {
+          await delay(2000);
+          const code = await sock.requestPairingCode(cleanNumber);
+          isReconnecting = false;
+          resolve({ code, socket: sock });
+        } catch (err) {
+          isReconnecting = false;
+          reject(err);
+        }
+      }
+    };
+
+    sock.ev.on("connection.update", onUpdate);
+  });
 }
 
 /* =========================================================
