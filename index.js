@@ -24,6 +24,9 @@ const http = require("http");
 const https = require("https");
 const axios = require("axios");
 
+// ==========================================
+// AUTH IMPORT (ඔයා ඉල්ලපු කොටස මෙතනට දැම්මා)
+// ==========================================
 const {
   restoreCredentials,
   requestPairCode,
@@ -535,7 +538,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =========================================================
-   24/7 SERVER START
+   24/7 ULTRA KEEP-ALIVE SERVER START
 ========================================================= */
 
 async function start() {
