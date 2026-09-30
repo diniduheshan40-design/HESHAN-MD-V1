@@ -1,9 +1,14 @@
 const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const { Readable, PassThrough } = require('stream');
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 module.exports = {
   name: 'tts',
   alias: ['speak', 'say', 'voice', 'girl'],
-  desc: 'Text to speech audio message',
+  desc: 'Text to speech real WhatsApp voice note (PTT)',
   category: 'convert',
   async execute(sock, msg, args, chatJid, extra = {}) {
     try {
@@ -19,7 +24,7 @@ module.exports = {
 
       if (!text) {
         return await sock.sendMessage(chatJid, { 
-          text: `*කරුණාකර හඬ බවට පත් කිරීමට වචනයක් ලබාදෙන්න!* 🎙️\n\n*උදාහරණ:* \n.tts අම්මට නිදිමතයි\n.tts Hello cute girl` 
+          text: `*කරුණාකර හඬ බවට පත් කිරීමට වචනයක් ලබාදෙන්න!* 🎙️\n\n*උදාහරණ:* \n.tts දැන් හරිද ඔයාව\n.tts Hello cute girl` 
         }, { quoted: msg });
       }
 
@@ -29,13 +34,14 @@ module.exports = {
       let audioUrl = '';
 
       if (hasSinhala) {
-        // Sinhala voice
+        // Sinhala audio endpoint
         audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=si&client=tw-ob`;
       } else {
-        // English Cute Girl (Salli - StreamElements)
+        // English Cute Girl (Salli)
         audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Salli&text=${encodeURIComponent(text)}`;
       }
 
+      // Audio stream එක download කරගැනීම
       const res = await axios.get(audioUrl, {
         responseType: 'arraybuffer',
         headers: {
@@ -44,26 +50,50 @@ module.exports = {
         timeout: 15000
       });
 
-      const audioBuffer = Buffer.from(res.data);
+      const inputStream = new Readable();
+      inputStream.push(Buffer.from(res.data));
+      inputStream.push(null);
 
-      // WhatsApp එකේ කිසිම දෝෂයක් නැතුව Audio එක Play වෙන්න audio/mp4 සහ standard audio track එකක් විදිහට යැවීම
+      // Memory stream හරහා Real WhatsApp OGG/OPUS බවට පරිවර්තනය කිරීම (No file lag/freeze)
+      const opusBuffer = await new Promise((resolve, reject) => {
+        const outputStream = new PassThrough();
+        const chunks = [];
+
+        outputStream.on('data', chunk => chunks.push(chunk));
+        outputStream.on('end', () => resolve(Buffer.concat(chunks)));
+        outputStream.on('error', reject);
+
+        ffmpeg(inputStream)
+          .noVideo()
+          .audioCodec('libopus')
+          .audioChannels(1)
+          .audioFrequency(48000)
+          .format('ogg')
+          .outputOptions([
+            '-avoid_negative_ts make_zero',
+            '-map_metadata -1'
+          ])
+          .on('error', err => reject(err))
+          .pipe(outputStream, { end: true });
+      });
+
+      // Profile picture එක සහිත Real WhatsApp Voice Note (PTT) එකක් විදිහට යැවීම
       await sock.sendMessage(
         chatJid,
         {
-          audio: audioBuffer,
-          mimetype: 'audio/mp4',
-          fileName: 'voice.mp3',
-          ptt: false // Voice note එකක් (PTT) විදියට දාලා corrupt නොවී, Playable Audio Track එකක් ලෙස යැවීම
+          audio: opusBuffer,
+          mimetype: 'audio/ogg; codecs=opus',
+          ptt: true // මේකෙන් තමයි කෙළවරේ profile picture එක වැටිලා mic voice note එකක් විදිහට එන්නේ
         },
         { quoted: msg }
       );
 
-      await sock.sendMessage(chatJid, { react: { text: '✅', key: msg.key } });
+      await sock.sendMessage(chatJid, { react: { text: '💋', key: msg.key } });
 
     } catch (err) {
-      console.error('TTS Error:', err.message);
+      console.error('PTT Voice Error:', err.message);
       await sock.sendMessage(chatJid, { 
-        text: `❌ Error: ${err.message}` 
+        text: `❌ Voice note සෑදීමේ දෝෂයක්: ${err.message}` 
       }, { quoted: msg });
     }
   }
