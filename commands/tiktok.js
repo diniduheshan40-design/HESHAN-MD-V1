@@ -1,6 +1,5 @@
 const axios = require("axios");
 
-// TikTok download sessions මතක තබා ගැනීමට (In-Memory Map)
 if (!global.tiktokSessions) {
   global.tiktokSessions = new Map();
 }
@@ -8,59 +7,59 @@ if (!global.tiktokSessions) {
 module.exports = {
   name: "tiktok",
   alias: ["tt", "ttdl", "tiktokdl"],
-  desc: "Download TikTok video or audio via interactive selection",
-  async execute(sock, msg, args, from, { reply, prefix }) {
+  desc: "Download TikTok HD/SD Video or Voice Note",
+  async execute(sock, msg, args, from) {
     try {
       const url = args[0]?.trim();
       if (!url) {
-        return await reply(`⚠️ කරුණාකර TikTok වීඩියෝ ලින්ක් එකක් ලබාදෙන්න!\n*උදාහරණ:* \`${prefix}tt https://vt.tiktok.com/xxxxxx/\``);
-      }
-
-      if (!url.includes("tiktok.com")) {
-        return await reply("❌ කරුණාකර වලංගු TikTok Video Link එකක් ලබාදෙන්න!");
+        return await sock.sendMessage(from, { 
+          text: `⚠️️ කරුණාකර TikTok Video Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`.tt https://vt.tiktok.com/xxxxxx/\`` 
+        }, { quoted: msg });
       }
 
       await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } });
 
-      // Sasa Dev TikTok API Call
-      const apiKey = "Sasa_Dev_Api_dc3569c8b4571d6203c49cf2e81dc1a8cdc7e7d3";
-      const apiUrl = `https://sasa-dev-api.xyz/api/tiktok/dl?apikey=${apiKey}&url=${encodeURIComponent(url)}&raw=true`;
+      const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
+      const apiUrl = `https://api.chamindu.site/api/v1/tiktok?url=${encodeURIComponent(url)}&api_key=${apiKey}`;
 
       const res = await axios.get(apiUrl, { timeout: 25000 });
+      const resData = res.data;
 
-      if (!res.data) {
+      if (!resData || (!resData.success && !resData.status)) {
         throw new Error("API එකෙන් දත්ත ලබාගැනීමට නොහැකි විය.");
       }
 
-      const data = res.data?.data || res.data?.result || res.data;
+      const item = resData.data || resData;
+      const downloads = item.downloads || {};
 
-      const videoUrl = data?.play || data?.nowm || data?.video || data?.download_url || data?.urls?.[0];
-      const title = data?.title || data?.desc || "TikTok Video";
-      const author = data?.author?.nickname || data?.author?.unique_id || "TikTok Creator";
-      const duration = data?.duration || "N/A";
-      const audioUrl = data?.music || data?.audio || data?.music_info?.url;
-      const cover = data?.cover || data?.origin_cover || data?.author?.avatar;
+      const hdVideo = downloads.no_watermark_hd || downloads.no_watermark;
+      const sdVideo = downloads.no_watermark_sd || downloads.no_watermark;
+      const audioUrl = downloads.audio || item.music_info?.play_url;
 
-      if (!videoUrl) {
-        throw new Error("වීඩියෝවේ බාගත කිරීමේ ලින්ක් එක හමු නොවීය.");
+      const title = item.title || "TikTok Media";
+      const author = item.author?.nickname || item.author?.unique_id || "TikTok User";
+      const duration = item.duration ? `${item.duration}s` : "N/A";
+      const cover = item.origin_cover || item.cover;
+
+      if (!hdVideo && !sdVideo && !audioUrl) {
+        throw new Error("බාගත කිරීමේ links හමු නොවීය.");
       }
 
-      // Premium TikTok Card Design
       const tiktokCard = 
 `╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐓𝐈𝐊𝐓𝐎𝐊 』───◆
 │
 │ 🎬 *ᴛɪᴛʟᴇ:* ${title}
 │ 👤 *ᴄʀᴇᴀᴛᴏʀ:* ${author}
-│ ⏱️ *ᴅᴜʀᴀᴛɪᴏɴ:* ${duration}s
-│ ⚡ *ǫᴜᴀʟɪᴛʏ:* HD (No Watermark)
+│ ⏱️ *ᴅᴜʀᴀᴛɪᴏɴ:* ${duration}
 │
 ├───『 📥 𝐒𝐄𝐋𝐄𝐂𝐓 𝐅𝐎𝐑𝐌𝐀𝐓 』───
 │
-│  [1] 🎬 *Video (No Watermark)*
-│  [2] 🎵 *Audio (MP3 Sound)*
+│  [1] 🎬 *HD Video (No Watermark)*
+│  [2] 📱 *SD Video (Data Saver)*
+│  [3] 🎙️ *Voice Note (PTT Audio)*
 │
 ╰──────────────────────────◆
-> *Reply to this message with 1 or 2*
+> *Reply with 1, 2, or 3 to download*
 > *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`;
 
       let sentMsg;
@@ -70,21 +69,23 @@ module.exports = {
           caption: tiktokCard
         }, { quoted: msg });
       } else {
-        sentMsg = await reply(tiktokCard);
+        sentMsg = await sock.sendMessage(from, { 
+          text: tiktokCard 
+        }, { quoted: msg });
       }
 
-      // Session එක save කර තැබීම
+      // තෝරාගැනීම සඳහා session එක save කිරීම
       if (sentMsg?.key?.id) {
         global.tiktokSessions.set(sentMsg.key.id, {
           title,
-          author,
-          videoUrl,
+          hdVideo,
+          sdVideo,
           audioUrl,
           from,
           createdAt: Date.now()
         });
 
-        // විනාඩි 10 කට පසු Session එක clear කිරීම
+        // විනාඩි 10 කින් session එක ඉවත් කිරීම
         setTimeout(() => {
           if (global.tiktokSessions.has(sentMsg.key.id)) {
             global.tiktokSessions.delete(sentMsg.key.id);
@@ -95,8 +96,11 @@ module.exports = {
       await sock.sendMessage(from, { react: { text: "⚡", key: msg.key } });
 
     } catch (err) {
-      console.error("TikTok download error:", err.message);
-      await reply(`❌ TikTok බාගත කිරීම අසාර්ථක විය: ${err.message || "Error"}`);
+      console.error("TikTok Error:", err.message);
+      await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
+      await sock.sendMessage(from, { 
+        text: `❌ දෝෂයක් සිදුවිය: ${err.message}` 
+      }, { quoted: msg });
     }
   }
 };
