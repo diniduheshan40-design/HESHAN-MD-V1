@@ -7,13 +7,14 @@ const {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  DisconnectReason
+  Browsers,
+  DisconnectReason,
+  delay
 } = require("@whiskeysockets/baileys");
 
 const mongoose = require("mongoose");
 
 const logger = pino({ level: "silent" });
-
 const sessionDir = path.join(__dirname, "session");
 
 let activeSocket = null;
@@ -21,87 +22,46 @@ let reconnectTimer = null;
 let isReconnecting = false;
 let onSocketCreatedCallback = null;
 
-let backupTimeout = null;
-
 /* =========================================================
    MONGODB SESSION MODEL
 ========================================================= */
 
 const SessionSchema = new mongoose.Schema(
   {
-    sessionId: {
-      type: String,
-      unique: true,
-      required: true
-    },
-
-    files: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {}
-    }
+    sessionId: { type: String, unique: true, required: true },
+    files: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
 const SessionModel =
   mongoose.models.DarkDinuSession ||
-  mongoose.model(
-    "DarkDinuSession",
-    SessionSchema
-  );
-
-/* =========================================================
-   SESSION DIRECTORY
-========================================================= */
+  mongoose.model("DarkDinuSession", SessionSchema);
 
 function ensureSessionDir() {
   if (!fs.existsSync(sessionDir)) {
-    fs.mkdirSync(sessionDir, {
-      recursive: true
-    });
+    fs.mkdirSync(sessionDir, { recursive: true });
   }
 }
 
 function deleteSessionDir() {
   if (fs.existsSync(sessionDir)) {
     try {
-      fs.rmSync(sessionDir, {
-        recursive: true,
-        force: true
-      });
-    } catch (e) {
-      console.error(
-        "⚠️ Session delete error:",
-        e.message
-      );
-    }
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    } catch (e) {}
   }
 }
 
 /* =========================================================
-   RESTORE SESSION FROM MONGODB
+   RESTORE FROM MONGODB
 ========================================================= */
 
 async function restoreCredentials() {
   ensureSessionDir();
-
   try {
-    const data =
-      await SessionModel.findOne({
-        sessionId: "dark_dinu_session"
-      }).lean();
-
-    if (
-      !data ||
-      !data.files ||
-      Object.keys(data.files).length === 0
-    ) {
-      console.log(
-        "ℹ️ [SESSION] No saved session found in MongoDB."
-      );
-
+    const data = await SessionModel.findOne({ sessionId: "dark_dinu_session" }).lean();
+    if (!data || !data.files || Object.keys(data.files).length === 0) {
+      console.log("ℹ️ [SESSION] No saved session found in MongoDB.");
       return false;
     }
 
@@ -109,735 +69,174 @@ async function restoreCredentials() {
     ensureSessionDir();
 
     let count = 0;
+    for (const [key, content] of Object.entries(data.files)) {
+      const fileName = key.replace(/___dot___/g, ".");
+      const filePath = path.join(sessionDir, fileName);
+      const dir = path.dirname(filePath);
 
-    for (const [key, content] of Object.entries(
-      data.files
-    )) {
-      const fileName =
-        key.replace(
-          /___dot___/g,
-          "."
-        );
-
-      const filePath =
-        path.join(
-          sessionDir,
-          fileName
-        );
-
-      const dir =
-        path.dirname(filePath);
-
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, {
-          recursive: true
-        });
-      }
-
-      fs.writeFileSync(
-        filePath,
-        content,
-        "utf8"
-      );
-
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filePath, content, "utf8");
       count++;
     }
 
-    console.log(
-      `✅ [SESSION] Restored ${count} session files from MongoDB.`
-    );
-
+    console.log(`✅ [SESSION] Restored ${count} session files from MongoDB.`);
     return true;
   } catch (error) {
-    console.error(
-      "❌ MongoDB restore error:",
-      error.message
-    );
-
+    console.error("❌ MongoDB restore error:", error.message);
     return false;
   }
 }
 
 /* =========================================================
-   BACKUP SESSION TO MONGODB
+   BACKUP ALL CREDENTIALS TO MONGODB (IMMEDIATE ON SAVE)
 ========================================================= */
 
 async function backupAllCredentials() {
-  if (backupTimeout) {
-    clearTimeout(backupTimeout);
-  }
+  try {
+    ensureSessionDir();
+    const files = {};
+    const allFiles = fs.readdirSync(sessionDir);
 
-  backupTimeout = setTimeout(
-    async () => {
-      try {
-        ensureSessionDir();
-
-        const files = {};
-
-        const allFiles =
-          fs.readdirSync(
-            sessionDir
-          );
-
-        for (const fileName of allFiles) {
-          const filePath =
-            path.join(
-              sessionDir,
-              fileName
-            );
-
-          if (
-            fs.existsSync(filePath) &&
-            fs.statSync(filePath).isFile()
-          ) {
-            const safeKey =
-              fileName.replace(
-                /\./g,
-                "___dot___"
-              );
-
-            files[safeKey] =
-              fs.readFileSync(
-                filePath,
-                "utf8"
-              );
-          }
-        }
-
-        if (
-          Object.keys(files).length === 0
-        ) {
-          return;
-        }
-
-        await SessionModel.findOneAndUpdate(
-          {
-            sessionId:
-              "dark_dinu_session"
-          },
-          {
-            $set: {
-              files
-            }
-          },
-          {
-            upsert: true,
-            new: true
-          }
-        );
-
-        console.log(
-          "⚡ [SESSION] Synced with MongoDB Atlas!"
-        );
-      } catch (err) {
-        console.error(
-          "❌ Backup error:",
-          err.message
-        );
+    for (const fileName of allFiles) {
+      const filePath = path.join(sessionDir, fileName);
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const safeKey = fileName.replace(/\./g, "___dot___");
+        files[safeKey] = fs.readFileSync(filePath, "utf8");
       }
-    },
-    1000
-  );
+    }
+
+    if (Object.keys(files).length === 0) return;
+
+    await SessionModel.findOneAndUpdate(
+      { sessionId: "dark_dinu_session" },
+      { $set: { files } },
+      { upsert: true }
+    );
+    console.log("⚡ [SESSION] Synced with MongoDB Atlas!");
+  } catch (err) {
+    console.error("❌ Backup error:", err.message);
+  }
 }
 
 /* =========================================================
-   CREATE WHATSAPP SOCKET
+   CREATE SOCKET ENGINE
 ========================================================= */
 
-async function createSocket(
-  isPairing = false
-) {
+async function createSocket(isPairing = false) {
   ensureSessionDir();
-
-  const {
-    state,
-    saveCreds
-  } =
-    await useMultiFileAuthState(
-      sessionDir
-    );
-
-  const {
-    version
-  } =
-    await fetchLatestBaileysVersion();
-
-  /* -------------------------------------------------------
-     CLOSE OLD SOCKET
-  ------------------------------------------------------- */
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const { version } = await fetchLatestBaileysVersion();
 
   if (activeSocket) {
     try {
       activeSocket.ev.removeAllListeners();
-      activeSocket.end(
-        undefined
-      );
+      activeSocket.end(undefined);
     } catch (e) {}
-
     activeSocket = null;
   }
 
-  /* -------------------------------------------------------
-     CREATE SOCKET
-
-     IMPORTANT:
-     Windows Chrome signature is intentionally used here.
-     This has been reported to help pairing-code linking
-     on Baileys 6.7.x.
-  ------------------------------------------------------- */
-
-  const sock =
-    makeWASocket({
-      version,
-
-      logger,
-
-      auth: {
-        creds: state.creds,
-
-        keys:
-          makeCacheableSignalKeyStore(
-            state.keys,
-            logger
-          )
-      },
-
-      browser: [
-        "Windows",
-        "Chrome",
-        "114.0.5735.198"
-      ],
-
-      printQRInTerminal: false,
-
-      syncFullHistory: false,
-
-      markOnlineOnConnect: false,
-
-      connectTimeoutMs: 60000,
-
-      keepAliveIntervalMs: 15000,
-
-      defaultQueryTimeoutMs: 0
-    });
+  const sock = makeWASocket({
+    version,
+    logger,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
+    },
+    // macOS Desktop Signature — WhatsApp Web Handshake එක Drop නොවී කෙලින්ම Connect වේ
+    browser: Browsers.macOS("Desktop"),
+    printQRInTerminal: false,
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    connectTimeoutMs: 120000,
+    keepAliveIntervalMs: 10000,
+    defaultQueryTimeoutMs: 60000
+  });
 
   activeSocket = sock;
 
-  /* =======================================================
-     SAVE CREDS
-  ======================================================= */
+  sock.ev.on("creds.update", async () => {
+    try {
+      await saveCreds();
+      await backupAllCredentials();
+    } catch (e) {}
+  });
 
-  sock.ev.on(
-    "creds.update",
-    async () => {
-      try {
-        await saveCreds();
+  sock.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect } = update;
 
-        await backupAllCredentials();
-      } catch (e) {}
+    if (connection === "open") {
+      isReconnecting = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      console.log("\x1b[32m%s\x1b[0m", "🟢 [SOCKET] WhatsApp Device Successfully Paired & Live!");
+      await backupAllCredentials();
     }
-  );
 
-  /* =======================================================
-     CONNECTION UPDATE
-  ======================================================= */
+    if (connection === "close") {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log(`⚠️ Connection closed. Status Code: ${statusCode}`);
 
-  sock.ev.on(
-    "connection.update",
-    async (update) => {
-      const {
-        connection,
-        lastDisconnect
-      } = update;
-
-      /* ---------------------------------------------------
-         CONNECTED
-      --------------------------------------------------- */
-
-      if (
-        connection === "open"
-      ) {
-        isReconnecting = false;
-
-        if (reconnectTimer) {
-          clearTimeout(
-            reconnectTimer
-          );
-
-          reconnectTimer = null;
-        }
-
-        console.log(
-          "\x1b[32m%s\x1b[0m",
-          "🟢 [SOCKET] WhatsApp Stream Stabilized & Paired!"
-        );
-
-        await backupAllCredentials();
+      if (statusCode === DisconnectReason.loggedOut) {
+        console.log("🚪 Logged out from WhatsApp. Clearing session...");
+        await SessionModel.deleteOne({ sessionId: "dark_dinu_session" }).catch(() => {});
+        deleteSessionDir();
+        return;
       }
 
-      /* ---------------------------------------------------
-         CLOSED
-      --------------------------------------------------- */
+      if (!isReconnecting && !isPairing) {
+        isReconnecting = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
 
-      if (
-        connection === "close"
-      ) {
-        const statusCode =
-          lastDisconnect
-            ?.error
-            ?.output
-            ?.statusCode;
-
-        console.log(
-          `⚠️ Connection closed. Status Code: ${statusCode}`
-        );
-
-        /* -----------------------------------------------
-           LOGGED OUT
-        ----------------------------------------------- */
-
-        if (
-          statusCode ===
-          DisconnectReason.loggedOut
-        ) {
-          console.log(
-            "🚪 Logged out from WhatsApp. Clearing session..."
-          );
-
-          await SessionModel.deleteOne({
-            sessionId:
-              "dark_dinu_session"
-          }).catch(() => {});
-
-          deleteSessionDir();
-
-          activeSocket = null;
-
-          return;
-        }
-
-        /* -----------------------------------------------
-           PAIRING SOCKET CLOSED
-
-           Do NOT start another socket here.
-        ----------------------------------------------- */
-
-        if (isPairing) {
-          console.log(
-            "⚠️ [PAIRING] Pairing socket closed."
-          );
-
-          activeSocket = null;
-
-          return;
-        }
-
-        /* -----------------------------------------------
-           NORMAL AUTO RECONNECT
-        ----------------------------------------------- */
-
-        if (
-          !isReconnecting
-        ) {
-          isReconnecting = true;
-
-          if (reconnectTimer) {
-            clearTimeout(
-              reconnectTimer
-            );
+        const delayMs = statusCode === DisconnectReason.restartRequired ? 2000 : 5000;
+        reconnectTimer = setTimeout(async () => {
+          try {
+            await createSocket(false);
+          } catch (e) {
+            console.error("Auto-reconnect error:", e.message);
+          } finally {
+            isReconnecting = false;
           }
-
-          const delayMs =
-            statusCode ===
-            DisconnectReason.restartRequired
-              ? 2000
-              : 5000;
-
-          console.log(
-            `🔄 Reconnecting automatically in ${delayMs / 1000}s...`
-          );
-
-          reconnectTimer =
-            setTimeout(
-              async () => {
-                try {
-                  await createSocket(
-                    false
-                  );
-                } catch (e) {
-                  console.error(
-                    "❌ Auto-reconnect error:",
-                    e.message
-                  );
-                } finally {
-                  isReconnecting =
-                    false;
-                }
-              },
-              delayMs
-            );
-        }
+        }, delayMs);
       }
     }
-  );
+  });
 
-  /* =======================================================
-     CALLBACK TO INDEX.JS
-  ======================================================= */
-
-  if (
-    onSocketCreatedCallback
-  ) {
-    onSocketCreatedCallback(
-      sock
-    );
+  if (onSocketCreatedCallback) {
+    onSocketCreatedCallback(sock);
   }
 
   return sock;
 }
 
 /* =========================================================
-   REQUEST PAIRING CODE
+   REQUEST PAIR CODE (FAST & NO-HANG ENGINE)
 ========================================================= */
 
-async function requestPairCode(
-  phoneNumber
-) {
-  /* -------------------------------------------------------
-     STOP OLD RECONNECT TIMER
-  ------------------------------------------------------- */
-
-  if (reconnectTimer) {
-    clearTimeout(
-      reconnectTimer
-    );
-
-    reconnectTimer = null;
-  }
-
+async function requestPairCode(phoneNumber) {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
   isReconnecting = true;
 
-  /* -------------------------------------------------------
-     NORMALIZE NUMBER
-  ------------------------------------------------------- */
-
-  let cleanNumber =
-    String(phoneNumber || "")
-      .replace(
-        /[^0-9]/g,
-        ""
-      );
-
-  if (
-    cleanNumber.startsWith("0")
-  ) {
-    cleanNumber =
-      "94" +
-      cleanNumber.substring(1);
-  }
-
-  if (
-    !/^94[0-9]{9}$/.test(
-      cleanNumber
-    )
-  ) {
-    isReconnecting = false;
-
-    throw new Error(
-      "Invalid Sri Lankan phone number."
-    );
-  }
-
-  console.log(
-    `📱 [PAIRING] Number: +${cleanNumber}`
-  );
-
-  /* -------------------------------------------------------
-     IMPORTANT:
-     Start with a completely fresh pairing session.
-  ------------------------------------------------------- */
-
   deleteSessionDir();
-
   ensureSessionDir();
 
-  /* -------------------------------------------------------
-     CREATE SOCKET
-  ------------------------------------------------------- */
+  const sock = await createSocket(true);
+  const cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
 
-  const sock =
-    await createSocket(true);
+  // Socket එක WhatsApp WebSocket එකත් සමග initial handshake එක සම්පූර්ණ කරන තෙක් තත්පර 3ක් ඉන්නවා
+  await delay(3000);
 
-  return new Promise(
-    (resolve, reject) => {
-      let finished = false;
-      let codeRequested = false;
-
-      /* ---------------------------------------------------
-         CLEANUP
-      --------------------------------------------------- */
-
-      const cleanup =
-        () => {
-          try {
-            sock.ev.off(
-              "connection.update",
-              onConnectionUpdate
-            );
-          } catch (e) {}
-        };
-
-      /* ---------------------------------------------------
-         SUCCESS
-      --------------------------------------------------- */
-
-      const finishSuccess =
-        (code) => {
-          if (finished) {
-            return;
-          }
-
-          finished = true;
-
-          cleanup();
-
-          isReconnecting =
-            false;
-
-          console.log(
-            `✅ [PAIRING] Code generated: ${code}`
-          );
-
-          resolve({
-            code,
-            socket: sock
-          });
-        };
-
-      /* ---------------------------------------------------
-         ERROR
-      --------------------------------------------------- */
-
-      const finishError =
-        (error) => {
-          if (finished) {
-            return;
-          }
-
-          finished = true;
-
-          cleanup();
-
-          isReconnecting =
-            false;
-
-          console.error(
-            "❌ [PAIRING] Error:",
-            error.message
-          );
-
-          reject(error);
-        };
-
-      /* ---------------------------------------------------
-         TIMEOUT
-      --------------------------------------------------- */
-
-      const timeout =
-        setTimeout(
-          () => {
-            finishError(
-              new Error(
-                "Pairing code timed out. WhatsApp server did not respond."
-              )
-            );
-          },
-          60000
-        );
-
-      /* ---------------------------------------------------
-         REQUEST CODE
-         
-         Official Baileys pairing flow:
-         wait for connection === "connecting"
-         then requestPairingCode().
-      --------------------------------------------------- */
-
-      const requestCode =
-        async () => {
-          if (
-            finished ||
-            codeRequested
-          ) {
-            return;
-          }
-
-          if (
-            sock.authState &&
-            sock.authState.creds &&
-            sock.authState.creds.registered
-          ) {
-            return;
-          }
-
-          codeRequested = true;
-
-          try {
-            console.log(
-              "⏳ [PAIRING] WhatsApp handshake detected..."
-            );
-
-            /* Small delay to make sure the socket
-               has completed its initial setup. */
-
-            await new Promise(
-              (resolve) =>
-                setTimeout(
-                  resolve,
-                  3000
-                )
-            );
-
-            if (finished) {
-              return;
-            }
-
-            console.log(
-              "📲 [PAIRING] Requesting pairing code..."
-            );
-
-            const code =
-              await sock.requestPairingCode(
-                cleanNumber
-              );
-
-            clearTimeout(
-              timeout
-            );
-
-            finishSuccess(
-              code
-            );
-          } catch (error) {
-            clearTimeout(
-              timeout
-            );
-
-            finishError(
-              error
-            );
-          }
-        };
-
-      /* ---------------------------------------------------
-         CONNECTION UPDATE
-      --------------------------------------------------- */
-
-      const onConnectionUpdate =
-        async (
-          update
-        ) => {
-          if (finished) {
-            return;
-          }
-
-          const {
-            connection,
-            lastDisconnect
-          } = update;
-
-          console.log(
-            `🔌 [PAIRING] Connection: ${connection || "waiting"}`
-          );
-
-          /* ---------------------------------------------
-             OFFICIAL TRIGGER:
-             connection === connecting
-          --------------------------------------------- */
-
-          if (
-            connection ===
-            "connecting"
-          ) {
-            await requestCode();
-            return;
-          }
-
-          /* ---------------------------------------------
-             QR EVENT FALLBACK
-
-             Pairing code doesn't need QR, but Baileys
-             docs allow !!qr as another trigger.
-          --------------------------------------------- */
-
-          if (
-            update.qr
-          ) {
-            await requestCode();
-            return;
-          }
-
-          /* ---------------------------------------------
-             CONNECTION CLOSED
-          --------------------------------------------- */
-
-          if (
-            connection ===
-            "close"
-          ) {
-            clearTimeout(
-              timeout
-            );
-
-            const statusCode =
-              lastDisconnect
-                ?.error
-                ?.output
-                ?.statusCode;
-
-            finishError(
-              new Error(
-                `WhatsApp pairing connection closed${
-                  statusCode
-                    ? ` (Status ${statusCode})`
-                    : ""
-                }.`
-              )
-            );
-          }
-        };
-
-      sock.ev.on(
-        "connection.update",
-        onConnectionUpdate
-      );
-
-      /* ---------------------------------------------------
-         FALLBACK TIMER
-
-         If the first "connecting" event happened before
-         our listener was attached, try once after 5 sec.
-      --------------------------------------------------- */
-
-      setTimeout(
-        async () => {
-          if (
-            finished ||
-            codeRequested
-          ) {
-            return;
-          }
-
-          console.log(
-            "🔁 [PAIRING] Fallback handshake check..."
-          );
-
-          await requestCode();
-        },
-        5000
-      );
+  if (!sock.authState.creds.registered) {
+    try {
+      const code = await sock.requestPairingCode(cleanNumber);
+      isReconnecting = false;
+      return { code, socket: sock };
+    } catch (err) {
+      isReconnecting = false;
+      throw err;
     }
-  );
+  } else {
+    isReconnecting = false;
+    throw new Error("Device already registered. Try again.");
+  }
 }
 
 /* =========================================================
@@ -846,50 +245,17 @@ async function requestPairCode(
 
 async function startSavedSocket() {
   ensureSessionDir();
+  const credsFile = path.join(sessionDir, "creds.json");
+  if (!fs.existsSync(credsFile)) return null;
 
-  const credsFile =
-    path.join(
-      sessionDir,
-      "creds.json"
-    );
-
-  if (
-    !fs.existsSync(
-      credsFile
-    )
-  ) {
-    return null;
-  }
-
-  console.log(
-    "🔐 [WHATSAPP] Saved credentials found. Starting socket..."
-  );
-
-  return await createSocket(
-    false
-  );
+  return await createSocket(false);
 }
-
-/* =========================================================
-   EXPORTS
-========================================================= */
 
 module.exports = {
   restoreCredentials,
-
   backupAllCredentials,
-
   requestPairCode,
-
   startSavedSocket,
-
-  onSocketCreated: (
-    cb
-  ) => {
-    onSocketCreatedCallback =
-      cb;
-  },
-
-  getActiveSocket: () =>
-    activeSocket
+  onSocketCreated: (cb) => { onSocketCreatedCallback = cb; },
+  getActiveSocket: () => activeSocket
 };
