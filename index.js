@@ -50,12 +50,15 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
-// Global Interactive Sessions (Song & TikTok)
+// Global Interactive Sessions (Song, TikTok & Facebook)
 if (!global.songSessions) {
   global.songSessions = new Map();
 }
 if (!global.tiktokSessions) {
   global.tiktokSessions = new Map();
+}
+if (!global.fbSessions) {
+  global.fbSessions = new Map();
 }
 
 app.use(express.json());
@@ -321,6 +324,55 @@ function initBot(sock) {
           } catch (ttSendErr) {
             console.error("TikTok send error:", ttSendErr);
             await reply("❌ TikTok මාධ්‍ය ගොනුව යැවීමේදී දෝෂයක් මතු විය.");
+            return;
+          }
+        }
+      }
+
+      // =========================================================
+      // FACEBOOK SELECTION REPLY HANDLER (NEW)
+      // =========================================================
+      if (quotedMsgId && global.fbSessions && global.fbSessions.has(quotedMsgId)) {
+        const fbSession = global.fbSessions.get(quotedMsgId);
+
+        if (["1", "2", "3"].includes(cleanBody)) {
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+
+          try {
+            if (cleanBody === "1") {
+              const videoUrl = fbSession.hd || fbSession.sd;
+              if (!videoUrl) return await reply("❌ HD වීඩියෝවක් හමු නොවීය.");
+
+              await sock.sendMessage(from, {
+                video: { url: videoUrl },
+                caption: `🎬 *${fbSession.title}*\n\n✨ *Quality:* HD Resolution\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`
+              }, { quoted: msg });
+
+            } else if (cleanBody === "2") {
+              const videoUrl = fbSession.sd || fbSession.hd;
+              if (!videoUrl) return await reply("❌ SD වීඩියෝවක් හමු නොවීය.");
+
+              await sock.sendMessage(from, {
+                video: { url: videoUrl },
+                caption: `🎬 *${fbSession.title}*\n\n✨ *Quality:* SD Resolution\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`
+              }, { quoted: msg });
+
+            } else if (cleanBody === "3") {
+              const audioUrl = fbSession.audio || fbSession.sd || fbSession.hd;
+              if (!audioUrl) return await reply("❌ Audio එක ලබා ගත නොහැකි විය.");
+
+              await sock.sendMessage(from, {
+                audio: { url: audioUrl },
+                mimetype: "audio/mp4",
+                fileName: `${fbSession.title || "fb_audio"}.mp3`
+              }, { quoted: msg });
+            }
+
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            return;
+          } catch (fbSendErr) {
+            console.error("FB send error:", fbSendErr);
+            await reply("❌ මාධ්‍ය ගොනුව යැවීමේදී දෝෂයක් මතු විය.");
             return;
           }
         }
