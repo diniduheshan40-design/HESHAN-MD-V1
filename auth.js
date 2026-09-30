@@ -8,7 +8,8 @@ const {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   Browsers,
-  DisconnectReason
+  DisconnectReason,
+  delay
 } = require("@whiskeysockets/baileys");
 
 const mongoose = require("mongoose");
@@ -115,10 +116,11 @@ async function backupAllCredentials() {
         { $set: { files } },
         { upsert: true }
       );
+      console.log("⚡ [SESSION] Synced with MongoDB Atlas!");
     } catch (err) {
       console.error("❌ Backup error:", err.message);
     }
-  }, 1500);
+  }, 1000);
 }
 
 /* =========================================================
@@ -130,7 +132,6 @@ async function createSocket(isPairing = false) {
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
 
-  // කලින් තිබූ socket එක සම්පූර්ණයෙන්ම close කර event listeners ඉවත් කිරීම
   if (activeSocket) {
     try {
       activeSocket.ev.removeAllListeners();
@@ -146,13 +147,14 @@ async function createSocket(isPairing = false) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.macOS("Safari"),
+    // Ubuntu Chrome Signature for bypassing Cloud/Render IP block
+    browser: Browsers.ubuntu("Chrome"),
     printQRInTerminal: false,
     syncFullHistory: false,
-    markOnlineOnConnect: true,
+    markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 25000,
-    defaultQueryTimeoutMs: 60000
+    keepAliveIntervalMs: 15000,
+    defaultQueryTimeoutMs: 0
   });
 
   activeSocket = sock;
@@ -170,7 +172,7 @@ async function createSocket(isPairing = false) {
     if (connection === "open") {
       isReconnecting = false;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      console.log("\x1b[32m%s\x1b[0m", "🟢 [SOCKET] WhatsApp Stream Stabilized!");
+      console.log("\x1b[32m%s\x1b[0m", "🟢 [SOCKET] WhatsApp Stream Stabilized & Paired!");
       await backupAllCredentials();
     }
 
@@ -178,7 +180,6 @@ async function createSocket(isPairing = false) {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       console.log(`⚠️ Connection closed. Status Code: ${statusCode}`);
 
-      // Session එක Invalid හෝ Logged Out නම් පමණක් DB එක මකන්න
       if (statusCode === DisconnectReason.loggedOut) {
         console.log("🚪 Logged out from WhatsApp. Clearing session...");
         await SessionModel.deleteOne({ sessionId: "dark_dinu_session" }).catch(() => {});
@@ -186,7 +187,6 @@ async function createSocket(isPairing = false) {
         return;
       }
 
-      // 24/7 Auto-Reconnect System (Anti-Freeze Loop)
       if (!isReconnecting && !isPairing) {
         isReconnecting = true;
         if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -215,7 +215,7 @@ async function createSocket(isPairing = false) {
 }
 
 /* =========================================================
-   REQUEST PAIR CODE (FAST & SAFE)
+   REQUEST PAIR CODE (FIXED: WAITS FOR HANDSHAKE READY)
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
@@ -226,20 +226,41 @@ async function requestPairCode(phoneNumber) {
   ensureSessionDir();
 
   const sock = await createSocket(true);
-
-  // Socket එක initialize වීමට තත්පර 3ක් රැඳී සිටීම
-  await new Promise((r) => setTimeout(r, 3000));
-
   const cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
-  
-  if (!sock.authState.creds.registered) {
-    const code = await sock.requestPairingCode(cleanNumber);
-    isReconnecting = false;
-    return { code, socket: sock };
-  } else {
-    isReconnecting = false;
-    throw new Error("Device already registered. Try again.");
-  }
+
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        isReconnecting = false;
+        reject(new Error("Pairing code timed out. WhatsApp server not responding."));
+      }
+    }, 25000);
+
+    const checkAndRequest = async (update) => {
+      // Socket එක handshake ready වූ පසු පමණක් code එක request කිරීම
+      if (update.qr || (!sock.authState.creds.registered && update.connection !== "close")) {
+        sock.ev.off("connection.update", checkAndRequest);
+        clearTimeout(timeout);
+        if (!resolved) {
+          resolved = true;
+          try {
+            await delay(2000);
+            const code = await sock.requestPairingCode(cleanNumber);
+            isReconnecting = false;
+            resolve({ code, socket: sock });
+          } catch (err) {
+            isReconnecting = false;
+            reject(err);
+          }
+        }
+      }
+    };
+
+    sock.ev.on("connection.update", checkAndRequest);
+  });
 }
 
 /* =========================================================
