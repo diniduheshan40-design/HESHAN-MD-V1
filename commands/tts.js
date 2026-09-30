@@ -2,8 +2,8 @@ const axios = require('axios');
 
 module.exports = {
   name: 'tts',
-  alias: ['speak', 'say', 'voice'],
-  desc: 'Convert text to WhatsApp voice message',
+  alias: ['speak', 'say', 'girl', 'voice'],
+  desc: 'Convert text to realistic cute girl voice',
   category: 'convert',
   async execute(sock, msg, args, chatJid, extra = {}) {
     try {
@@ -19,54 +19,61 @@ module.exports = {
 
       if (!text) {
         return await sock.sendMessage(chatJid, { 
-          text: `*කරුණාකර හඬ බවට පත් කිරීමට වචනයක් ලබාදෙන්න!*\n\n*උදාහරණ:* \n.tts කොහොමද යාලුවේ\n.tts Hello bro` 
+          text: `*කරුණාකර කෙල්ලට කියන්න ඕනෙ දේ ලියන්න!* 😉❤️\n\n*උදාහරණ:*\n.tts හායි සුදූ ඔයාට කොහොමද?\n.tts Hey babe, what are you doing?` 
         }, { quoted: msg });
       }
 
-      // Default language එක සිංහල (si) හෝ English (en) ලෙස හඳුනාගැනීම
-      let lang = 'si';
-      if (args[0] && args[0].length === 2 && !/[\u0D80-\u0DFF]/.test(args[0])) {
-        lang = args[0].toLowerCase();
-        text = args.slice(1).join(' ');
+      await sock.sendMessage(chatJid, { react: { text: '💖', key: msg.key } });
+
+      // සිංහල අකුරු තියෙනවද බැලීම
+      const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
+
+      let ttsUrl = '';
+
+      if (hasSinhala) {
+        // සිංහල කෙල්ලගෙ කටහඬ (Google / Microsoft Neural Sinhala Female)
+        // සිංහල භාෂාවට වඩාත් පැහැදිලි high-pitch female audio endpoint එක
+        ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=si&client=tw-ob&pitch=1.2`;
       } else {
-        const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
-        lang = hasSinhala ? 'si' : 'en';
+        // English සඳහා ලස්සන, තරුණ කෙල්ලෙක්ගෙ Cute Neural Voice එකක් (StreamElements Brian/Amy/Salli or Edge TTS)
+        // Salli / Joanna / Ivy කියන්නෙ සුපිරිම cute girl voices
+        ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Salli&text=${encodeURIComponent(text)}`;
       }
-
-      await sock.sendMessage(chatJid, { react: { text: '🎙️', key: msg.key } });
-
-      // Google Translate Public TTS URL
-      const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${lang}&client=tw-ob`;
 
       const response = await axios.get(ttsUrl, {
         responseType: 'arraybuffer',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
         },
-        timeout: 15000
+        timeout: 20000
       });
 
       const audioBuffer = Buffer.from(response.data);
 
-      // WhatsApp එකට නිවැරදි Mimetype එක ලබාදීම (audio/mpeg)
+      // WhatsApp Voice Note (PTT) විදියටම යවනවා (කොළ පාට mic ලකුණත් එක්ක ලස්සනට Play වෙන්න)
       await sock.sendMessage(
         chatJid,
         {
           audio: audioBuffer,
           mimetype: 'audio/mpeg',
-          fileName: 'tts.mp3',
-          ptt: false // Voice note එකක් වෙනුවට playable audio එකක් ලෙස යැවීමෙන් corrupt නොවී Play වේ
+          fileName: 'cute_girl_voice.mp3',
+          ptt: true
         },
         { quoted: msg }
       );
 
-      await sock.sendMessage(chatJid, { react: { text: '✅', key: msg.key } });
+      await sock.sendMessage(chatJid, { react: { text: '💋', key: msg.key } });
 
     } catch (err) {
-      console.error('TTS Error:', err);
-      await sock.sendMessage(chatJid, { 
-        text: `❌ Voice note සෑදීමේ දෝෂයක්: ${err.message}` 
-      }, { quoted: msg });
+      console.error('Girl TTS Error:', err);
+      // Fallback
+      try {
+        const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(args.join(' '))}&tl=si&client=tw-ob`;
+        const res = await axios.get(fallbackUrl, { responseType: 'arraybuffer' });
+        await sock.sendMessage(chatJid, { audio: Buffer.from(res.data), mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+      } catch (e) {
+        await sock.sendMessage(chatJid, { text: `❌ කටහඬ හදන්න බැරි වුණා: ${err.message}` }, { quoted: msg });
+      }
     }
   }
 };
