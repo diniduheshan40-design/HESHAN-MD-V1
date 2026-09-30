@@ -51,7 +51,7 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
-// Global Interactive Sessions (Song, TikTok, Facebook & Video)
+// Global Interactive Sessions & Status React Map
 if (!global.songSessions) {
   global.songSessions = new Map();
 }
@@ -63,6 +63,9 @@ if (!global.fbSessions) {
 }
 if (!global.videoSessions) {
   global.videoSessions = new Map();
+}
+if (!global.statusReactMap) {
+  global.statusReactMap = new Map();
 }
 
 app.use(express.json());
@@ -229,7 +232,52 @@ function initBot(sock) {
       if (!msg || !msg.message) return;
 
       const from = msg.key.remoteJid;
-      if (!from || from === "status@broadcast") return;
+      if (!from) return;
+
+      // =========================================================
+      // ISOLATED STATUS AUTO SEEN & AUTO REACT (PER-BOT SYSTEM)
+      // =========================================================
+      if (from === "status@broadcast") {
+        try {
+          // 1. Status Auto Seen (කියවූ බව ලකුණු කිරීම)
+          await sock.readMessages([msg.key]);
+
+          // 2. මෙම Socket එක ක්‍රියාත්මක වන Bot ගේ දුරකථන අංකය වෙන්කර ගැනීම
+          const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
+
+          if (currentBotNumber && msg.key.participant) {
+            // Memory Map එකේ Emoji එක තබා ඇත්දැයි බැලීම
+            let botEmoji = global.statusReactMap?.get(currentBotNumber);
+
+            // Memory එකේ නොමැති නම් Database එකෙන් ලබා ගැනීම
+            if (!botEmoji) {
+              const savedMeta = await BotMeta.findOne({ key: `status_react_${currentBotNumber}` });
+              botEmoji = savedMeta ? savedMeta.value : "💚";
+              global.statusReactMap.set(currentBotNumber, botEmoji);
+            }
+
+            // 'off' නොවේ නම් අදාළ Emoji එකෙන් පමණක් React යැවීම
+            if (botEmoji !== "off") {
+              await sock.sendMessage(
+                "status@broadcast",
+                {
+                  react: {
+                    text: botEmoji,
+                    key: msg.key
+                  }
+                },
+                {
+                  statusJidList: [msg.key.participant]
+                }
+              );
+            }
+          }
+        } catch (statusErr) {
+          // Status Error ඇතිවුවහොත් Process එක බිඳ නොවැටී පාලනය කිරීම
+          console.error("Status Handler Error:", statusErr.message);
+        }
+        return;
+      }
 
       // Bot ගේම මැසේජ් වලට ක්‍රියාත්මක වීම වැළැක්වීම
       if (msg.key.fromMe) return;
