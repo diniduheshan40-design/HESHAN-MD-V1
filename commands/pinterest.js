@@ -6,7 +6,6 @@ module.exports = {
   desc: "Download Pinterest videos or images",
   async execute(sock, msg, args, from) {
     try {
-      // 1. Link එක ලබා ගැනීම
       const inputUrl = args.join(' ');
 
       if (!inputUrl) {
@@ -15,17 +14,15 @@ module.exports = {
         }, { quoted: msg });
       }
 
-      // 2. Processing reaction එක දැමීම
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-      // 3. pin.it short links full URL බවට හරවා ගැනීම
+      // pin.it short links full URL බවට හරවා ගැනීම
       let targetUrl = inputUrl.trim();
       if (targetUrl.includes('pin.it')) {
         const headRes = await axios.get(targetUrl, { maxRedirects: 5 });
         targetUrl = headRes.request?.res?.responseUrl || targetUrl;
       }
 
-      // 4. API Call එක
       const apiKey = 'chama_api_ec9848130d1aea209f08fb85e0b4720f';
       const apiUrl = `https://api.chamindu.site/api/v1/media/pinterest/infodl?q=${encodeURIComponent(targetUrl)}&api_key=${apiKey}`;
 
@@ -34,38 +31,58 @@ module.exports = {
 
       if (!resData.status || !resData.data || !resData.data.downloads || !resData.data.downloads.length) {
         await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
-        return await sock.sendMessage(from, { text: "❌ මාධ්‍යය සොයාගත නොහැකි විය. Link එක නිවැරදිදැයි පරීක්ෂා කරන්න." }, { quoted: msg });
+        return await sock.sendMessage(from, { text: "❌ මාධ්‍යය සොයාගත නොහැකි විය." }, { quoted: msg });
       }
 
       const info = resData.data;
+      const downloads = info.downloads;
       const title = info.title || 'Pinterest Media';
 
-      // වීඩියෝ එකක් හෝ පින්තූරයක්ද කියා හඳුනා ගැනීම
-      const videoItem = info.downloads.find(dl => dl.type?.includes('video'));
-      const imageItem = info.downloads.find(dl => dl.type?.includes('image') || dl.type === 'image_direct') || info.downloads[0];
+      // 1. මුලින්ම downloads array එකේ video / mp4 එකක් තියෙනවද බලනවා
+      let videoItem = downloads.find(dl => 
+        (dl.type && dl.type.toLowerCase().includes('video')) ||
+        (dl.name && dl.name.toLowerCase().includes('video')) ||
+        (dl.link && dl.link.toLowerCase().includes('.mp4'))
+      );
 
-      const caption = `╭───『 ᴘɪɴᴛᴇʀᴇsᴛ ᴅʟ 』───\n` +
-                      `│\n` +
-                      `├─▸ 📌 *Title:* ${title}\n` +
-                      `├─▸ 🌐 *Type:* ${videoItem ? 'Video' : 'Image'}\n` +
-                      `│\n` +
-                      `└───『 ᴅᴀʀᴋ ᴅɪɴᴜ 』───`;
+      // 2. API එකේ trailer හෝ වෙනත් video link එකක් ඇත්නම් එයද පරීක්ෂා කිරීම
+      let videoUrl = videoItem ? videoItem.link : null;
+      if (!videoUrl && info.trailer && info.trailer !== 'N/A' && info.trailer.includes('http')) {
+        videoUrl = info.trailer;
+      }
 
-      // 5. Media එක යැවීම
-      if (videoItem && videoItem.link) {
+      // 3. වීඩියෝ එකක් හමු වුණා නම් අනිවාර්යයෙන්ම Video එක යවනවා
+      if (videoUrl) {
+        const caption = `╭───『 ᴘɪɴᴛᴇʀᴇsᴛ ᴠɪᴅᴇᴏ 』───\n` +
+                        `│\n` +
+                        `├─▸ 📌 *Title:* ${title}\n` +
+                        `├─▸ 🎬 *Format:* MP4 Video\n` +
+                        `│\n` +
+                        `└───『 ᴅᴀʀᴋ ᴅɪɴᴜ 』───`;
+
         await sock.sendMessage(from, {
-          video: { url: videoItem.link },
+          video: { url: videoUrl },
           caption: caption,
           mimetype: 'video/mp4'
         }, { quoted: msg });
-      } else if (imageItem && imageItem.link) {
+
+      } else {
+        // Video එකක් ඇත්තටම නැතිනම් පමණක් Image එක යවනවා
+        const imageItem = downloads.find(dl => dl.type?.includes('image') || dl.type === 'image_direct') || downloads[0];
+
+        const caption = `╭───『 ᴘɪɴᴛᴇʀᴇsᴛ ɪᴍᴀɢᴇ 』───\n` +
+                        `│\n` +
+                        `├─▸ 📌 *Title:* ${title}\n` +
+                        `├─▸ 🖼️ *Format:* Image\n` +
+                        `│\n` +
+                        `└───『 ᴅᴀʀᴋ ᴅɪɴᴜ 』───`;
+
         await sock.sendMessage(from, {
           image: { url: imageItem.link },
           caption: caption
         }, { quoted: msg });
       }
 
-      // 6. අවසන් වූ පසු React එක
       await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
 
     } catch (err) {
