@@ -22,7 +22,7 @@ let isReconnecting = false;
 let onSocketCreatedCallback = null;
 
 /* =========================================================
-   MONGODB SESSION MODEL (Mixed for Safe JSON Storage)
+   MONGODB SESSION MODEL
 ========================================================= */
 
 const SessionSchema = new mongoose.Schema(
@@ -45,7 +45,9 @@ function ensureSessionDir() {
 
 function deleteSessionDir() {
   if (fs.existsSync(sessionDir)) {
-    fs.rmSync(sessionDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    } catch (e) {}
   }
 }
 
@@ -116,19 +118,19 @@ async function backupAllCredentials() {
     } catch (err) {
       console.error("❌ Backup error:", err.message);
     }
-  }, 2000);
+  }, 1500);
 }
 
 /* =========================================================
    CREATE SOCKET ENGINE
 ========================================================= */
 
-async function createSocket() {
+async function createSocket(isPairing = false) {
   ensureSessionDir();
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   const { version } = await fetchLatestBaileysVersion();
 
-  // Safely clean up old socket before creating new one
+  // කලින් තිබූ socket එක සම්පූර්ණයෙන්ම close කර event listeners ඉවත් කිරීම
   if (activeSocket) {
     try {
       activeSocket.ev.removeAllListeners();
@@ -144,12 +146,12 @@ async function createSocket() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.ubuntu("Chrome"),
+    browser: Browsers.macOS("Safari"),
     printQRInTerminal: false,
     syncFullHistory: false,
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000,
+    keepAliveIntervalMs: 25000,
     defaultQueryTimeoutMs: 60000
   });
 
@@ -167,6 +169,8 @@ async function createSocket() {
 
     if (connection === "open") {
       isReconnecting = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      console.log("\x1b[32m%s\x1b[0m", "🟢 [SOCKET] WhatsApp Stream Stabilized!");
       await backupAllCredentials();
     }
 
@@ -174,26 +178,31 @@ async function createSocket() {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       console.log(`⚠️ Connection closed. Status Code: ${statusCode}`);
 
+      // Session එක Invalid හෝ Logged Out නම් පමණක් DB එක මකන්න
       if (statusCode === DisconnectReason.loggedOut) {
-        console.log("🚪 Logged out from WhatsApp.");
+        console.log("🚪 Logged out from WhatsApp. Clearing session...");
         await SessionModel.deleteOne({ sessionId: "dark_dinu_session" }).catch(() => {});
         deleteSessionDir();
         return;
       }
 
-      if (!isReconnecting) {
+      // 24/7 Auto-Reconnect System (Anti-Freeze Loop)
+      if (!isReconnecting && !isPairing) {
         isReconnecting = true;
         if (reconnectTimer) clearTimeout(reconnectTimer);
 
+        const delayMs = statusCode === DisconnectReason.restartRequired ? 2000 : 5000;
+        console.log(`🔄 Reconnecting automatically in ${delayMs / 1000}s...`);
+
         reconnectTimer = setTimeout(async () => {
-          console.log("🔄 Reconnecting WhatsApp Socket safely...");
           try {
-            await createSocket();
+            await createSocket(false);
           } catch (e) {
             console.error("Auto-reconnect error:", e.message);
+          } finally {
             isReconnecting = false;
           }
-        }, 5000);
+        }, delayMs);
       }
     }
   });
@@ -206,20 +215,31 @@ async function createSocket() {
 }
 
 /* =========================================================
-   REQUEST PAIR CODE
+   REQUEST PAIR CODE (FAST & SAFE)
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  isReconnecting = true;
+
   deleteSessionDir();
   ensureSessionDir();
 
-  const sock = await createSocket();
+  const sock = await createSocket(true);
 
+  // Socket එක initialize වීමට තත්පර 3ක් රැඳී සිටීම
   await new Promise((r) => setTimeout(r, 3000));
-  const cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
-  const code = await sock.requestPairingCode(cleanNumber);
 
-  return { code, socket: sock };
+  const cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
+  
+  if (!sock.authState.creds.registered) {
+    const code = await sock.requestPairingCode(cleanNumber);
+    isReconnecting = false;
+    return { code, socket: sock };
+  } else {
+    isReconnecting = false;
+    throw new Error("Device already registered. Try again.");
+  }
 }
 
 /* =========================================================
@@ -231,7 +251,7 @@ async function startSavedSocket() {
   const credsFile = path.join(sessionDir, "creds.json");
   if (!fs.existsSync(credsFile)) return null;
 
-  return await createSocket();
+  return await createSocket(false);
 }
 
 module.exports = {
