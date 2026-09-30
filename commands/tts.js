@@ -1,11 +1,21 @@
 const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 module.exports = {
   name: 'tts',
-  alias: ['speak', 'say', 'girl', 'voice'],
-  desc: 'Convert text to realistic cute girl voice',
+  alias: ['speak', 'say', 'voice', 'girl'],
+  desc: 'Convert text to voice note with female audio',
   category: 'convert',
   async execute(sock, msg, args, chatJid, extra = {}) {
+    let tempMp3 = null;
+    let tempOpus = null;
+
     try {
       let text = args.join(' ');
       const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -19,28 +29,24 @@ module.exports = {
 
       if (!text) {
         return await sock.sendMessage(chatJid, { 
-          text: `*කරුණාකර කෙල්ලට කියන්න ඕනෙ දේ ලියන්න!* 😉❤️\n\n*උදාහරණ:*\n.tts හායි සුදූ ඔයාට කොහොමද?\n.tts Hey babe, what are you doing?` 
+          text: `*කරුණාකර හඬ බවට පත් කිරීමට වචනයක් ලබාදෙන්න!* 🎙️\n\n*උදාහරණ:* \n.tts අම්මට නිදිමතයි\n.tts Hello cute girl` 
         }, { quoted: msg });
       }
 
-      await sock.sendMessage(chatJid, { react: { text: '💖', key: msg.key } });
+      await sock.sendMessage(chatJid, { react: { text: '🎙️', key: msg.key } });
 
-      // සිංහල අකුරු තියෙනවද බැලීම
       const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
-
       let ttsUrl = '';
 
       if (hasSinhala) {
-        // සිංහල කෙල්ලගෙ කටහඬ (Google / Microsoft Neural Sinhala Female)
-        // සිංහල භාෂාවට වඩාත් පැහැදිලි high-pitch female audio endpoint එක
-        ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=si&client=tw-ob&pitch=1.2`;
+        // Sinhala female pitch endpoint
+        ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=si&client=tw-ob`;
       } else {
-        // English සඳහා ලස්සන, තරුණ කෙල්ලෙක්ගෙ Cute Neural Voice එකක් (StreamElements Brian/Amy/Salli or Edge TTS)
-        // Salli / Joanna / Ivy කියන්නෙ සුපිරිම cute girl voices
+        // Natural girl voice for English
         ttsUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Salli&text=${encodeURIComponent(text)}`;
       }
 
-      const response = await axios.get(ttsUrl, {
+      const res = await axios.get(ttsUrl, {
         responseType: 'arraybuffer',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
@@ -48,15 +54,36 @@ module.exports = {
         timeout: 20000
       });
 
-      const audioBuffer = Buffer.from(response.data);
+      const uniqueId = Date.now();
+      tempMp3 = path.join(os.tmpdir(), `tts_${uniqueId}.mp3`);
+      tempOpus = path.join(os.tmpdir(), `tts_${uniqueId}.opus`);
 
-      // WhatsApp Voice Note (PTT) විදියටම යවනවා (කොළ පාට mic ලකුණත් එක්ක ලස්සනට Play වෙන්න)
+      fs.writeFileSync(tempMp3, Buffer.from(res.data));
+
+      // FFmpeg මගින් WhatsApp standard Voice Note (Opus) බවට පරිවර්තනය කිරීම
+      await new Promise((resolve, reject) => {
+        ffmpeg(tempMp3)
+          .toFormat('ogg')
+          .audioCodec('libopus')
+          .audioChannels(1)
+          .audioFrequency(48000)
+          .outputOptions([
+            '-avoid_negative_ts make_zero',
+            '-map_metadata -1'
+          ])
+          .on('end', resolve)
+          .on('error', reject)
+          .save(tempOpus);
+      });
+
+      const opusBuffer = fs.readFileSync(tempOpus);
+
+      // WhatsApp Voice Note ලෙස යැවීම
       await sock.sendMessage(
         chatJid,
         {
-          audio: audioBuffer,
-          mimetype: 'audio/mpeg',
-          fileName: 'cute_girl_voice.mp3',
+          audio: opusBuffer,
+          mimetype: 'audio/ogg; codecs=opus',
           ptt: true
         },
         { quoted: msg }
@@ -65,15 +92,14 @@ module.exports = {
       await sock.sendMessage(chatJid, { react: { text: '💋', key: msg.key } });
 
     } catch (err) {
-      console.error('Girl TTS Error:', err);
-      // Fallback
-      try {
-        const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(args.join(' '))}&tl=si&client=tw-ob`;
-        const res = await axios.get(fallbackUrl, { responseType: 'arraybuffer' });
-        await sock.sendMessage(chatJid, { audio: Buffer.from(res.data), mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
-      } catch (e) {
-        await sock.sendMessage(chatJid, { text: `❌ කටහඬ හදන්න බැරි වුණා: ${err.message}` }, { quoted: msg });
-      }
+      console.error('TTS Engine Error:', err);
+      await sock.sendMessage(chatJid, { 
+        text: `❌ හඬ සෑදීමේ දෝෂයක්: ${err.message}` 
+      }, { quoted: msg });
+    } finally {
+      // Temporary files ඉවත් කිරීම
+      if (tempMp3 && fs.existsSync(tempMp3)) try { fs.unlinkSync(tempMp3); } catch (e) {}
+      if (tempOpus && fs.existsSync(tempOpus)) try { fs.unlinkSync(tempOpus); } catch (e) {}
     }
   }
 };
