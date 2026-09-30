@@ -6,7 +6,7 @@ module.exports = {
   desc: "Download Pinterest videos or images using Supun API",
   async execute(sock, msg, args, from) {
     try {
-      const inputUrl = args.join(' ');
+      const inputUrl = args.join(' ').trim();
 
       if (!inputUrl) {
         return await sock.sendMessage(from, { 
@@ -14,41 +14,55 @@ module.exports = {
         }, { quoted: msg });
       }
 
-      // Processing reaction එක දැමීම
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
       const apiKey = 'supun-tvo5olfxylo98b8l6b9lq174';
-      const apiUrl = `https://supunofc.site/api/download/down/pin/dl?url=${encodeURIComponent(inputUrl.trim())}&apikey=${apiKey}`;
+      const apiUrl = `https://supunofc.site/api/download/down/pin/dl?url=${encodeURIComponent(inputUrl)}&apikey=${apiKey}`;
 
-      const response = await axios.get(apiUrl);
-      const resData = response.data;
+      const { data } = await axios.get(apiUrl);
 
-      // API Response එක check කිරීම
-      if (!resData.status && !resData.success && !resData.result && !resData.data) {
-        await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
-        return await sock.sendMessage(from, { text: `❌ මාධ්‍යය බාගත කළ නොහැකි විය: ${resData.error || 'දෝෂයක් සිදුවිය'}` }, { quoted: msg });
-      }
+      // API Response එක පරීක්ෂා කිරීම
+      const res = data.result || data.data || data;
 
-      const data = resData.result || resData.data || resData;
+      // 1. JSON එක ඇතුළෙන් Video Link එකක් තිබේදැයි ගැඹුරින් සෙවීම
+      let videoUrl = null;
+      let imageUrl = null;
 
-      // Video එකක් හෝ Image link එකක් තියෙනවද සොයා බැලීම
-      let videoUrl = data.video || data.video_url || (data.downloads && data.downloads.find(d => d.type?.includes('video'))?.url);
-      let imageUrl = data.image || data.image_url || data.url || (data.downloads && data.downloads[0]?.url);
+      if (typeof res === 'object') {
+        // Video සඳහා සුලභ properties පරීක්ෂා කිරීම
+        videoUrl = res.video || res.video_url || res.url_video || res.nowm || res.direct_link;
 
-      // සරල string link එකක් ආවොත් (result එක string එකක් ලෙස ලැබුණහොත්)
-      if (typeof data === 'string' && data.startsWith('http')) {
-        if (data.includes('.mp4')) videoUrl = data;
-        else imageUrl = data;
+        // downloads array එකක් ඇත්නම්
+        if (!videoUrl && Array.isArray(res.downloads)) {
+          const vItem = res.downloads.find(item => 
+            (item.type && item.type.includes('video')) || 
+            (item.format && item.format.includes('mp4')) ||
+            (item.url && item.url.includes('.mp4'))
+          );
+          if (vItem) videoUrl = vItem.url || vItem.link;
+        }
+
+        // Object එකේ values ඇතුළේ කෙලින්ම .mp4 link එකක් තියෙනවද බැලීම
+        if (!videoUrl) {
+          const values = Object.values(res).flatMap(v => typeof v === 'object' ? Object.values(v || {}) : v);
+          videoUrl = values.find(val => typeof val === 'string' && val.includes('.mp4'));
+        }
+
+        // Image link එක සොයාගැනීම (video එකක් නැතිවිට පමණක් භාවිතයට)
+        imageUrl = res.image || res.image_url || res.url_image || res.url || res.thumbnail;
+      } else if (typeof res === 'string' && res.startsWith('http')) {
+        if (res.includes('.mp4')) videoUrl = res;
+        else imageUrl = res;
       }
 
       const caption = `╭───『 ᴘɪɴᴛᴇʀᴇsᴛ ᴅʟ 』───\n` +
                       `│\n` +
-                      `├─▸ 👤 *Bot:* DARK DINU\n` +
-                      `├─▸ 🎬 *Status:* Success\n` +
+                      `├─▸ 👤 *Source:* Pinterest\n` +
+                      `├─▸ 🎬 *Quality:* High Definition\n` +
                       `│\n` +
-                      `└───『 ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅɪɴᴜ 』───`;
+                      `└───『 ᴅᴀʀᴋ ᴅɪɴᴜ 』───`;
 
-      // Video එකක් තිබේ නම් Video එක යැවීම
+      // 2. Video එකක් හමු වුණා නම් අනිවාර්යයෙන්ම Video එක Send කිරීම
       if (videoUrl) {
         await sock.sendMessage(from, {
           video: { url: videoUrl },
@@ -56,19 +70,20 @@ module.exports = {
           mimetype: 'video/mp4'
         }, { quoted: msg });
       } else if (imageUrl) {
-        // Image එකක් පමණක් ඇත්නම් Image එක යැවීම
+        // Video එකක් ඇත්තටම නැතිනම් පමණක් Image එක යැවීම
         await sock.sendMessage(from, {
           image: { url: imageUrl },
           caption: caption
         }, { quoted: msg });
       } else {
-        throw new Error('Download link එකක් හමු නොවීය.');
+        await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
+        return await sock.sendMessage(from, { text: "❌ බාගත හැකි Video එකක් හමු නොවීය." }, { quoted: msg });
       }
 
       await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
 
     } catch (err) {
-      console.error("Pinterest Supun API Error:", err.message);
+      console.error("Pinterest Error:", err.message);
       await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
       await sock.sendMessage(from, { text: `❌ දෝෂයක් සිදුවිය: ${err.message}` }, { quoted: msg });
     }
