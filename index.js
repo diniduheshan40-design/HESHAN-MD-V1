@@ -41,7 +41,7 @@ const DEVELOPER_LID = "15947733680169";
 
 const MONGO_URI =
   process.env.MONGO_URI ||
-  "mongodb+srv://diniduheshan2007_db_user:Heshan2007@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
+  "mongodb+srv://diniduheshan2007_db_user:SZD7sfcIU6Einajx@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
 
 const commandsDir = path.resolve(__dirname, "commands");
 if (!fs.existsSync(commandsDir)) {
@@ -303,7 +303,7 @@ function initBot(sock) {
           try {
             if (cleanBody === "1") {
               const videoUrl = ttSession.hdVideo || ttSession.videoUrl;
-              await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ HD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ HD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
             } else if (cleanBody === "2") {
               const videoUrl = ttSession.sdVideo || ttSession.videoUrl;
               await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ SD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
@@ -328,7 +328,7 @@ function initBot(sock) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
-              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "2") {
               await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "3") {
@@ -524,7 +524,7 @@ app.get("/pair", async (req, res) => {
   }
 });
 
-// Uptime Monitoring Endpoint (Fast 200 OK Response)
+// Uptime Monitoring Endpoint
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "alive",
@@ -535,7 +535,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =========================================================
-   24/7 ULTRA KEEP-ALIVE SERVER START
+   24/7 SERVER START
 ========================================================= */
 
 async function start() {
@@ -543,7 +543,6 @@ async function start() {
     console.log(`🚀 DARK DINU RUNNING ON PORT: ${PORT}`);
   });
 
-  // UptimeRobot සහ Render Sleep වැළැක්වීමේ Internal Ping Engine එක
   const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   if (appUrl) {
     const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
@@ -552,11 +551,9 @@ async function start() {
     setInterval(() => {
       const client = targetPing.startsWith("https") ? https : http;
       client.get(targetPing, (res) => {
-        if (res.statusCode === 200) {
-          // Keep-alive successful
-        }
+        if (res.statusCode === 200) {}
       }).on("error", () => {});
-    }, 4 * 60 * 1000); // විනාඩි 4කට වරක් Ping වේ
+    }, 4 * 60 * 1000);
   }
 
   try {
@@ -572,7 +569,7 @@ async function start() {
     if (sock) {
       console.log("\x1b[32m%s\x1b[0m", "✅ [WHATSAPP] Active session restored!");
     } else {
-      console.log("ℹ️️ [WHATSAPP] Ready for new pairing!");
+      console.log("ℹ️ [WHATSAPP] Ready for new pairing!");
     }
   } catch (err) {
     console.error("Startup error:", err.message);
