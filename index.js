@@ -292,30 +292,47 @@ function initBot(sock) {
       }
 
       // =========================================================
-      // TIKTOK SELECTION REPLY HANDLER
+      // TIKTOK SELECTION REPLY HANDLER (HD, SD, VOICE NOTE)
       // =========================================================
       if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
         const ttSession = global.tiktokSessions.get(quotedMsgId);
 
-        if (["1", "2"].includes(cleanBody)) {
+        if (["1", "2", "3"].includes(cleanBody)) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
           try {
+            // 1️⃣ - HD Video
             if (cleanBody === "1") {
+              const videoUrl = ttSession.hdVideo || ttSession.videoUrl;
+              if (!videoUrl) return await reply("❌ HD වීඩියෝවක් හමු නොවීය.");
+
               await sock.sendMessage(from, {
-                video: { url: ttSession.videoUrl },
-                caption: `🎬 *${ttSession.title}*\n👤 *Creator:* ${ttSession.author}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
+                video: { url: videoUrl },
+                caption: `🎬 *${ttSession.title}*\n⚡ *Quality:* HD Resolution (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
                 mimetype: "video/mp4"
               }, { quoted: msg });
+
+            // 2️⃣ - SD Video
             } else if (cleanBody === "2") {
+              const videoUrl = ttSession.sdVideo || ttSession.videoUrl;
+              if (!videoUrl) return await reply("❌ SD වීඩියෝවක් හමු නොවීය.");
+
+              await sock.sendMessage(from, {
+                video: { url: videoUrl },
+                caption: `🎬 *${ttSession.title}*\n⚡ *Quality:* SD Data Saver (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
+                mimetype: "video/mp4"
+              }, { quoted: msg });
+
+            // 3️⃣ - Voice Note (PTT)
+            } else if (cleanBody === "3") {
               if (!ttSession.audioUrl) {
                 return await reply("⚠️ මෙම වීඩියෝවට අදාළ Audio එක හමු නොවීය.");
               }
 
               await sock.sendMessage(from, {
                 audio: { url: ttSession.audioUrl },
-                mimetype: "audio/mp4",
-                fileName: `${ttSession.author}_sound.mp3`
+                mimetype: "audio/ogg; codecs=opus",
+                ptt: true
               }, { quoted: msg });
             }
 
@@ -330,7 +347,7 @@ function initBot(sock) {
       }
 
       // =========================================================
-      // FACEBOOK SELECTION REPLY HANDLER (NEW)
+      // FACEBOOK SELECTION REPLY HANDLER
       // =========================================================
       if (quotedMsgId && global.fbSessions && global.fbSessions.has(quotedMsgId)) {
         const fbSession = global.fbSessions.get(quotedMsgId);
