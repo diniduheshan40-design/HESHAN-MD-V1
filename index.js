@@ -2,7 +2,7 @@ require("dotenv").config();
 
 // Process crash වීම වැළැක්වීමේ Handlers
 process.on("uncaughtException", (err) => {
-  console.error("⚠️️ Caught Exception:", err.message);
+  console.error("⚠️ Caught Exception:", err.message);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
@@ -52,21 +52,11 @@ let activeSocket = null;
 let pairingInProgress = false;
 
 // Global Interactive Sessions & Status React Map
-if (!global.songSessions) {
-  global.songSessions = new Map();
-}
-if (!global.tiktokSessions) {
-  global.tiktokSessions = new Map();
-}
-if (!global.fbSessions) {
-  global.fbSessions = new Map();
-}
-if (!global.videoSessions) {
-  global.videoSessions = new Map();
-}
-if (!global.statusReactMap) {
-  global.statusReactMap = new Map();
-}
+if (!global.songSessions) global.songSessions = new Map();
+if (!global.tiktokSessions) global.tiktokSessions = new Map();
+if (!global.fbSessions) global.fbSessions = new Map();
+if (!global.videoSessions) global.videoSessions = new Map();
+if (!global.statusReactMap) global.statusReactMap = new Map();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -114,8 +104,6 @@ function loadCommands() {
             cmd.alias.forEach(a => aliases.set(a.toLowerCase().trim(), name));
           }
           console.log(`\x1b[32m%s\x1b[0m`, `   ├ ⚡ Registered: .${name}`);
-        } else {
-          console.log(`\x1b[33m%s\x1b[0m`, `   ⚠️ Skipped ${file}: Missing 'name' property.`);
         }
       } catch (err) {
         console.error(`\x1b[31m%s\x1b[0m`, `   ❌ Error reading ${file}: ${err.message}`);
@@ -191,7 +179,7 @@ function initBot(sock) {
 │ 👤 *USER:* +${rawUser}
 │ 👑 *DEVELOPER:* ${DEVELOPER_NAME}
 │ 📞 *DEV CONTACT:* +${DEVELOPER_NUMBER}
-│ 🌐 *ENGINE:* Baileys Multi-Device
+│ 🌐 *ENGINE:* Baileys 24/7 Engine
 │
 ╰───────────────────────◆
 > *DARK DINU is active! Type .ping to test speed.* 🔥`;
@@ -234,54 +222,35 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (!from) return;
 
-      // =========================================================
-      // ISOLATED STATUS AUTO SEEN & AUTO REACT (DELIVERY TO SENDER JID)
-      // =========================================================
+      // Status Auto Seen & Auto React
       if (from === "status@broadcast") {
         try {
-          // 1. Status Auto Seen (කියවූ බව ලකුණු කිරීම)
           await sock.readMessages([msg.key]);
 
-          // Status එක පල කළ පුද්ගලයාගේ සැබෑ JID එක (Sender JID)
           const senderJid = msg.key.participant || msg.participant;
-
-          // මෙම Socket එක run වන Bot ගේ දුරකථන අංකය
           const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
 
           if (currentBotNumber && senderJid) {
-            // Memory Map එකෙන් Emoji එක පරීක්ෂා කිරීම
             let botEmoji = global.statusReactMap?.get(currentBotNumber);
 
-            // Memory එකේ නැතිනම් DB එකෙන් Load කිරීම
             if (!botEmoji) {
               const savedMeta = await BotMeta.findOne({ key: `status_react_${currentBotNumber}` });
               botEmoji = savedMeta ? savedMeta.value : "💚";
               global.statusReactMap.set(currentBotNumber, botEmoji);
             }
 
-            // 'off' කර නැතිනම් අදාළ User ගේ JID එකට Status React යැවීම
             if (botEmoji !== "off") {
               await sock.sendMessage(
                 senderJid,
-                {
-                  react: {
-                    text: botEmoji,
-                    key: msg.key
-                  }
-                },
-                {
-                  statusJidList: [senderJid]
-                }
+                { react: { text: botEmoji, key: msg.key } },
+                { statusJidList: [senderJid] }
               );
             }
           }
-        } catch (statusErr) {
-          console.error("Status Handler Error:", statusErr.message);
-        }
+        } catch (e) {}
         return;
       }
 
-      // Bot ගේම මැසේජ් වලට ක්‍රියාත්මක වීම වැළැක්වීම
       if (msg.key.fromMe) return;
 
       const isGroup = from.endsWith("@g.us");
@@ -296,7 +265,6 @@ function initBot(sock) {
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
       const cleanBody = body.trim();
 
-      // Owner Check
       const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
       const isOwner = Boolean(
         senderClean === DEVELOPER_NUMBER ||
@@ -305,200 +273,110 @@ function initBot(sock) {
         sender?.includes(DEVELOPER_LID)
       );
 
-      // =========================================================
-      // SONG SELECTION REPLY HANDLER
-      // =========================================================
+      // Song Handler
       if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
         const session = global.songSessions.get(quotedMsgId);
-
         if (["1", "2", "3"].includes(cleanBody)) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-
           try {
             if (cleanBody === "1") {
-              await sock.sendMessage(from, {
-                audio: { url: session.url },
-                mimetype: "audio/mp4",
-                fileName: `${session.title}.mp3`
-              }, { quoted: msg });
+              await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/mp4", fileName: `${session.title}.mp3` }, { quoted: msg });
             } else if (cleanBody === "2") {
-              await sock.sendMessage(from, {
-                document: { url: session.url },
-                mimetype: "audio/mpeg",
-                fileName: `${session.title}.mp3`
-              }, { quoted: msg });
+              await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
             } else if (cleanBody === "3") {
-              await sock.sendMessage(from, {
-                audio: { url: session.url },
-                mimetype: "audio/ogg; codecs=opus",
-                ptt: true
-              }, { quoted: msg });
+              await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
             }
-
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
             return;
-          } catch (sendErr) {
-            console.error("Song send error:", sendErr);
+          } catch (e) {
             await reply("❌ Audio එක යැවීමේදී දෝෂයක් මතු විය.");
             return;
           }
         }
       }
 
-      // =========================================================
-      // TIKTOK SELECTION REPLY HANDLER (HD, SD, VOICE NOTE)
-      // =========================================================
+      // TikTok Handler
       if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
         const ttSession = global.tiktokSessions.get(quotedMsgId);
-
         if (["1", "2", "3"].includes(cleanBody)) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-
           try {
-            // 1️⃣ - HD Video
             if (cleanBody === "1") {
               const videoUrl = ttSession.hdVideo || ttSession.videoUrl;
-              if (!videoUrl) return await reply("❌ HD වීඩියෝවක් හමු නොවීය.");
-
-              await sock.sendMessage(from, {
-                video: { url: videoUrl },
-                caption: `🎬 *${ttSession.title}*\n⚡ *Quality:* HD Resolution (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
-                mimetype: "video/mp4"
-              }, { quoted: msg });
-
-            // 2️⃣ - SD Video
+              await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ HD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
             } else if (cleanBody === "2") {
               const videoUrl = ttSession.sdVideo || ttSession.videoUrl;
-              if (!videoUrl) return await reply("❌ SD වීඩියෝවක් හමු නොවීය.");
-
-              await sock.sendMessage(from, {
-                video: { url: videoUrl },
-                caption: `🎬 *${ttSession.title}*\n⚡ *Quality:* SD Data Saver (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
-                mimetype: "video/mp4"
-              }, { quoted: msg });
-
-            // 3️⃣ - Voice Note (PTT)
+              await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ SD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
             } else if (cleanBody === "3") {
-              if (!ttSession.audioUrl) {
-                return await reply("⚠️ මෙම වීඩියෝවට අදාළ Audio එක හමු නොවීය.");
+              if (ttSession.audioUrl) {
+                await sock.sendMessage(from, { audio: { url: ttSession.audioUrl }, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
               }
-
-              await sock.sendMessage(from, {
-                audio: { url: ttSession.audioUrl },
-                mimetype: "audio/ogg; codecs=opus",
-                ptt: true
-              }, { quoted: msg });
             }
-
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
             return;
-          } catch (ttSendErr) {
-            console.error("TikTok send error:", ttSendErr);
-            await reply("❌ TikTok මාධ්‍ය ගොනුව යැවීමේදී දෝෂයක් මතු විය.");
+          } catch (e) {
+            await reply("❌ TikTok බාගත කිරීමේ දෝෂයක් මතු විය.");
             return;
           }
         }
       }
 
-      // =========================================================
-      // FACEBOOK SELECTION REPLY HANDLER
-      // =========================================================
+      // Facebook Handler
       if (quotedMsgId && global.fbSessions && global.fbSessions.has(quotedMsgId)) {
         const fbSession = global.fbSessions.get(quotedMsgId);
-
         if (["1", "2", "3"].includes(cleanBody)) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-
           try {
             if (cleanBody === "1") {
-              const videoUrl = fbSession.hd || fbSession.sd;
-              if (!videoUrl) return await reply("❌ HD වීඩියෝවක් හමු නොවීය.");
-
-              await sock.sendMessage(from, {
-                video: { url: videoUrl },
-                caption: `🎬 *${fbSession.title}*\n\n✨ *Quality:* HD Resolution\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`
-              }, { quoted: msg });
-
+              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "2") {
-              const videoUrl = fbSession.sd || fbSession.hd;
-              if (!videoUrl) return await reply("❌ SD වීඩියෝවක් හමු නොවීය.");
-
-              await sock.sendMessage(from, {
-                video: { url: videoUrl },
-                caption: `🎬 *${fbSession.title}*\n\n✨ *Quality:* SD Resolution\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`
-              }, { quoted: msg });
-
+              await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "3") {
-              const audioUrl = fbSession.audio || fbSession.sd || fbSession.hd;
-              if (!audioUrl) return await reply("❌ Audio එක ලබා ගත නොහැකි විය.");
-
-              await sock.sendMessage(from, {
-                audio: { url: audioUrl },
-                mimetype: "audio/mp4",
-                fileName: `${fbSession.title || "fb_audio"}.mp3`
-              }, { quoted: msg });
+              await sock.sendMessage(from, { audio: { url: fbSession.audio || fbSession.sd }, mimetype: "audio/mp4", fileName: "audio.mp3" }, { quoted: msg });
             }
-
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
             return;
-          } catch (fbSendErr) {
-            console.error("FB send error:", fbSendErr);
-            await reply("❌ මාධ්‍ය ගොනුව යැවීමේදී දෝෂයක් මතු විය.");
+          } catch (e) {
+            await reply("❌ FB Media යැවීමේදී දෝෂයක් මතු විය.");
             return;
           }
         }
       }
 
-      // =========================================================
-      // YOUTUBE VIDEO SELECTION REPLY HANDLER (1, 2, 3, 4)
-      // =========================================================
+      // YouTube Video Selection Handler
       if (quotedMsgId && global.videoSessions && global.videoSessions.has(quotedMsgId)) {
         const vSession = global.videoSessions.get(quotedMsgId);
-
-        const qualityMap = {
-          "1": "1080p",
-          "2": "720p",
-          "3": "480p",
-          "4": "360p"
-        };
+        const qualityMap = { "1": "1080p", "2": "720p", "3": "480p", "4": "360p" };
 
         if (qualityMap[cleanBody]) {
           const selectedQuality = qualityMap[cleanBody];
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-
           try {
             const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
             const downloadApi = `https://api.chamindu.site/api/v1/youtube/download?url=${encodeURIComponent(vSession.url)}&quality=${selectedQuality}&format=mp4&api_key=${apiKey}`;
 
             const qRes = await axios.get(downloadApi, { timeout: 45000 });
             const qData = qRes.data?.data || qRes.data;
-
             const finalDownloadUrl = qData?.download_url || qData?.direct_url;
 
-            if (!finalDownloadUrl) {
-              await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
-              return await reply(`❌ ${selectedQuality} වීඩියෝ ලින්ක් එක ලබාගැනීමට නොහැකි විය. කරුණාකර වෙනත් Quality එකක් තෝරන්න.`);
+            if (finalDownloadUrl) {
+              await sock.sendMessage(from, {
+                video: { url: finalDownloadUrl },
+                caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
+                mimetype: "video/mp4"
+              }, { quoted: msg });
+              await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+              global.videoSessions.delete(quotedMsgId);
+              return;
             }
-
-            await sock.sendMessage(from, {
-              video: { url: finalDownloadUrl },
-              caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
-              mimetype: "video/mp4"
-            }, { quoted: msg });
-
-            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            global.videoSessions.delete(quotedMsgId);
-            return;
-          } catch (dlErr) {
-            console.error("YouTube download error:", dlErr.message);
-            await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
-            await reply(`❌ ${selectedQuality} බාගත කිරීමේ දෝෂයක් මතු විය: ${dlErr.message}`);
+          } catch (e) {
+            await reply("❌ වීඩියෝව ලබාගත නොහැකි විය.");
             return;
           }
         }
       }
 
-      // Prefix check (. / ! # /)
+      // Command Execution
       const prefixes = [".", "!", "#", "/"];
       const prefix = prefixes.find(p => body.startsWith(p));
       if (!prefix) return;
@@ -508,7 +386,6 @@ function initBot(sock) {
       if (!commandName) return;
 
       console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from}`);
-
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
@@ -529,22 +406,16 @@ function initBot(sock) {
           console.error(`❌ Execution error in .${commandName}:`, cmdErr);
           await reply(`⚠️ Error executing *.${commandName}*:\n_${cmdErr.message}_`);
         }
-      } else {
-        if (commandName === "ping" || commandName === "speed" || commandName === "p") {
-          try {
-            await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
-            const start = Date.now();
-            const latency = Date.now() - start;
-            const sent = await sock.sendMessage(from, { 
-              text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*\n_(Internal Fallback)_` 
-            }, { quoted: msg });
-
-            if (sent?.key) {
-              await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
-            }
-            return;
-          } catch (e) {}
-        }
+      } else if (["ping", "speed", "p"].includes(commandName)) {
+        try {
+          await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
+          const start = Date.now();
+          const latency = Date.now() - start;
+          const sent = await sock.sendMessage(from, { 
+            text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*` 
+          }, { quoted: msg });
+          if (sent?.key) await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
+        } catch (e) {}
       }
 
     } catch (e) {
@@ -558,7 +429,7 @@ onSocketCreated((sock) => {
 });
 
 /* =========================================================
-   WEB UI (DARK PAIR SERVICE)
+   WEB UI & PAIR SERVICE
 ========================================================= */
 
 app.get("/", (req, res) => {
@@ -621,7 +492,7 @@ async function getCode() {
       if (navigator.clipboard) navigator.clipboard.writeText(data.code).catch(function(){});
       resDiv.innerHTML = '<div class="code-box" onclick="navigator.clipboard.writeText(\\x27' + data.code + '\\x27)"><div class="code-text">' + data.code + '</div><div class="badge">✓ Auto-Copied to clipboard!</div></div>';
     } else {
-      resDiv.innerHTML = '<div class="error">' + (data.error || "Failed") + '</div>';
+      resDiv.innerHTML = '<div class="error">' + (data.error || "Failed to get pairing code") + '</div>';
     }
   } catch (err) {
     resDiv.innerHTML = '<div class="error">Server Connection Failed!</div>';
@@ -635,56 +506,57 @@ async function getCode() {
 </html>`);
 });
 
-/* =========================================================
-   ROUTES & SERVER START
-========================================================= */
-
 app.get("/pair", async (req, res) => {
-  if (pairingInProgress) return res.status(429).json({ error: "Pairing in progress..." });
+  if (pairingInProgress) return res.status(429).json({ error: "Pairing in progress, please wait 10 seconds..." });
 
   let number = String(req.query.num || "").replace(/[^0-9]/g, "");
   if (number.startsWith("0")) number = "94" + number.substring(1);
-  if (!/^94[0-9]{9}$/.test(number)) return res.status(400).json({ error: "Invalid Sri Lankan number" });
+  if (!/^94[0-9]{9}$/.test(number)) return res.status(400).json({ error: "Invalid Sri Lankan number format." });
 
   pairingInProgress = true;
   try {
     const result = await requestPairCode(number);
     return res.json({ success: true, code: result.code });
   } catch (error) {
-    return res.status(500).json({ error: error.message || "Pairing failed" });
+    return res.status(500).json({ error: error.message || "Pairing failed. Try again in 5 seconds." });
   } finally {
-    pairingInProgress = false;
+    setTimeout(() => { pairingInProgress = false; }, 3000);
   }
 });
 
+// Uptime Monitoring Endpoint (Fast 200 OK Response)
 app.get("/health", (req, res) => {
   res.status(200).json({
-    status: "online",
+    status: "alive",
     bot: "DARK DINU MD",
-    developer: DEVELOPER_NAME,
-    loaded_commands: Array.from(commands.keys()).length,
-    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-    whatsapp: activeSocket ? "active" : "not-connected",
-    timestamp: new Date().toISOString()
+    uptime: process.uptime(),
+    activeSocket: activeSocket ? "connected" : "reconnecting"
   });
 });
 
+/* =========================================================
+   24/7 ULTRA KEEP-ALIVE SERVER START
+========================================================= */
+
 async function start() {
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 DARK DINU WEB SERVER RUNNING ON PORT: ${PORT}`);
+    console.log(`🚀 DARK DINU RUNNING ON PORT: ${PORT}`);
   });
 
+  // UptimeRobot සහ Render Sleep වැළැක්වීමේ Internal Ping Engine එක
   const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   if (appUrl) {
-    console.log(`⏱️ Self-ping scheduled for: ${appUrl}`);
+    const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
+    console.log(`⏱️ Self Keep-Alive Scheduled: ${targetPing}`);
+
     setInterval(() => {
-      const client = appUrl.startsWith("https") ? https : http;
-      client.get(`${appUrl}/health`, (res) => {
-        console.log(`[PING] Keep-alive status: ${res.statusCode}`);
-      }).on("error", (e) => {
-        console.warn("[PING] Keep-alive warning:", e.message);
-      });
-    }, 8 * 60 * 1000);
+      const client = targetPing.startsWith("https") ? https : http;
+      client.get(targetPing, (res) => {
+        if (res.statusCode === 200) {
+          // Keep-alive successful
+        }
+      }).on("error", () => {});
+    }, 4 * 60 * 1000); // විනාඩි 4කට වරක් Ping වේ
   }
 
   try {
@@ -700,7 +572,7 @@ async function start() {
     if (sock) {
       console.log("\x1b[32m%s\x1b[0m", "✅ [WHATSAPP] Active session restored!");
     } else {
-      console.log("ℹ️ [WHATSAPP] Ready for new pairing!");
+      console.log("ℹ️️ [WHATSAPP] Ready for new pairing!");
     }
   } catch (err) {
     console.error("Startup error:", err.message);
