@@ -25,7 +25,7 @@ const https = require("https");
 const axios = require("axios");
 
 // ==========================================
-// AUTH IMPORT (ඔයා ඉල්ලපු කොටස මෙතනට දැම්මා)
+// AUTH IMPORT
 // ==========================================
 const {
   restoreCredentials,
@@ -254,10 +254,16 @@ function initBot(sock) {
         return;
       }
 
-      if (msg.key.fromMe) return;
-
+      // Group ද නැද්ද සහ Sender කවුද කියා හඳුනාගැනීම
       const isGroup = from.endsWith("@g.us");
-      const sender = isGroup ? msg.key.participant : from;
+      const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
+
+      // බොට් දුවන නම්බර් එකෙන් ආවොත් (fromMe) sender එක bot number එක ලෙස තහවුරු කරයි
+      let sender = isGroup ? msg.key.participant : from;
+      if (msg.key.fromMe) {
+        sender = `${currentBotNumber}@s.whatsapp.net`;
+      }
+
       const body = extractMessageBody(msg);
       if (!body) return;
 
@@ -269,12 +275,21 @@ function initBot(sock) {
       const cleanBody = body.trim();
 
       const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
-      const isOwner = Boolean(
+
+      // Access Control: Developer, Bot Owner, සහ General Users
+      const isDev = Boolean(
         senderClean === DEVELOPER_NUMBER ||
         senderClean === DEVELOPER_LID ||
         sender?.includes(DEVELOPER_NUMBER) ||
         sender?.includes(DEVELOPER_LID)
       );
+
+      const isBotOwner = Boolean(
+        msg.key.fromMe ||
+        senderClean === currentBotNumber
+      );
+
+      const isOwner = Boolean(isDev || isBotOwner);
 
       // Song Handler
       if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
@@ -388,7 +403,7 @@ function initBot(sock) {
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from}`);
+      console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from} | Sender: ${senderClean}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
@@ -398,6 +413,8 @@ function initBot(sock) {
             prefix,
             sender,
             isOwner,
+            isDev,
+            isBotOwner,
             isGroup,
             reply,
             DEVELOPER_NAME,
