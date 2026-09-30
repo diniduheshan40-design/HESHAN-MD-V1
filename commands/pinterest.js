@@ -3,82 +3,89 @@ const axios = require('axios');
 module.exports = {
   name: "pinterest",
   alias: ["pt"],
-  desc: "Download Pinterest videos or images using Supun API",
+  desc: "Download Pinterest Videos Only",
   async execute(sock, msg, args, from) {
     try {
       const inputUrl = args.join(' ').trim();
 
       if (!inputUrl) {
         return await sock.sendMessage(from, { 
-          text: "⚠️ කරුණාකර Pinterest Link එකක් ලබා දෙන්න!\n\nඋදාහරණයක්:\n*.pt https://pin.it/xxxxx*" 
+          text: "⚠️ කරුණාකර Pinterest Video Link එකක් ලබා දෙන්න!\n\nඋදාහරණයක්:\n*.pt https://pin.it/8qffdstax*" 
         }, { quoted: msg });
       }
 
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-      const apiKey = 'supun-tvo5olfxylo98b8l6b9lq174';
-      const apiUrl = `https://supunofc.site/api/download/down/pin/dl?url=${encodeURIComponent(inputUrl)}&apikey=${apiKey}`;
+      // 1. pin.it short link එක සැබෑ pinterest.com link එක බවට හරවා ගැනීම (Unshorten)
+      let fullUrl = inputUrl;
+      if (inputUrl.includes('pin.it')) {
+        try {
+          const redirectRes = await axios.get(inputUrl, {
+            maxRedirects: 10,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+            }
+          });
+          fullUrl = redirectRes.request?.res?.responseUrl || redirectRes.config?.url || inputUrl;
+        } catch (e) {
+          // ignore redirect errors
+        }
+      }
+
+      // 2. Chamindu API එක මගින් Full URL එක හරහා වීඩියෝව ලබා ගැනීම
+      const apiKey = 'chama_api_ec9848130d1aea209f08fb85e0b4720f';
+      const apiUrl = `https://api.chamindu.site/api/v1/media/pinterest/infodl?q=${encodeURIComponent(fullUrl)}&api_key=${apiKey}`;
 
       const { data } = await axios.get(apiUrl);
 
-      // API Response එක පරීක්ෂා කිරීම
-      const res = data.result || data.data || data;
-
-      // 1. JSON එක ඇතුළෙන් Video Link එකක් තිබේදැයි ගැඹුරින් සෙවීම
       let videoUrl = null;
-      let imageUrl = null;
 
-      if (typeof res === 'object') {
-        // Video සඳහා සුලභ properties පරීක්ෂා කිරීම
-        videoUrl = res.video || res.video_url || res.url_video || res.nowm || res.direct_link;
-
-        // downloads array එකක් ඇත්නම්
-        if (!videoUrl && Array.isArray(res.downloads)) {
-          const vItem = res.downloads.find(item => 
-            (item.type && item.type.includes('video')) || 
-            (item.format && item.format.includes('mp4')) ||
-            (item.url && item.url.includes('.mp4'))
-          );
-          if (vItem) videoUrl = vItem.url || vItem.link;
-        }
-
-        // Object එකේ values ඇතුළේ කෙලින්ම .mp4 link එකක් තියෙනවද බැලීම
-        if (!videoUrl) {
-          const values = Object.values(res).flatMap(v => typeof v === 'object' ? Object.values(v || {}) : v);
-          videoUrl = values.find(val => typeof val === 'string' && val.includes('.mp4'));
-        }
-
-        // Image link එක සොයාගැනීම (video එකක් නැතිවිට පමණක් භාවිතයට)
-        imageUrl = res.image || res.image_url || res.url_image || res.url || res.thumbnail;
-      } else if (typeof res === 'string' && res.startsWith('http')) {
-        if (res.includes('.mp4')) videoUrl = res;
-        else imageUrl = res;
+      // JSON එක ඇතුළෙන් video file එකක් ඇත්නම් පමණක් සොයා ගැනීම
+      if (data && data.data && Array.isArray(data.data.downloads)) {
+        const vItem = data.data.downloads.find(d => 
+          (d.type && d.type.toLowerCase().includes('video')) ||
+          (d.name && d.name.toLowerCase().includes('video')) ||
+          (d.link && d.link.includes('.mp4'))
+        );
+        if (vItem) videoUrl = vItem.link;
       }
 
-      const caption = `╭───『 ᴘɪɴᴛᴇʀᴇsᴛ ᴅʟ 』───\n` +
+      // 3. Chamindu API එකේ නැතිනම් Supun API එකට යොමු කිරීම (Fallback)
+      if (!videoUrl) {
+        const supunApi = `https://supunofc.site/api/download/down/pin/dl?url=${encodeURIComponent(fullUrl)}&apikey=supun-tvo5olfxylo98b8l6b9lq174`;
+        const sRes = await axios.get(supunApi);
+        const sData = sRes.data?.result || sRes.data?.data || sRes.data;
+
+        if (typeof sData === 'object') {
+          videoUrl = sData.video || sData.video_url || sData.nowm || sData.url_video;
+          if (!videoUrl && Array.isArray(sData.downloads)) {
+            const sv = sData.downloads.find(i => (i.type && i.type.includes('video')) || (i.url && i.url.includes('.mp4')));
+            if (sv) videoUrl = sv.url || sv.link;
+          }
+        }
+      }
+
+      // 4. වීඩියෝවක් හමු නොවූයේ නම් Photo නොයවා Error මැසේජ් එකක් දැක්වීම
+      if (!videoUrl) {
+        await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
+        return await sock.sendMessage(from, { 
+          text: "❌ මෙම Pin එකෙහි MP4 Video එකක් සොයාගත නොහැකි විය. කරුණාකර වෙනත් වීඩියෝවක් උත්සාහ කරන්න." 
+        }, { quoted: msg });
+      }
+
+      const caption = `╭───『 ᴘɪɴᴛᴇʀᴇsᴛ ᴠɪᴅᴇᴏ 』───\n` +
                       `│\n` +
-                      `├─▸ 👤 *Source:* Pinterest\n` +
-                      `├─▸ 🎬 *Quality:* High Definition\n` +
+                      `├─▸ 👤 *Bot:* DARK DINU\n` +
+                      `├─▸ 🎬 *Format:* MP4 Video\n` +
                       `│\n` +
                       `└───『 ᴅᴀʀᴋ ᴅɪɴᴜ 』───`;
 
-      // 2. Video එකක් හමු වුණා නම් අනිවාර්යයෙන්ම Video එක Send කිරීම
-      if (videoUrl) {
-        await sock.sendMessage(from, {
-          video: { url: videoUrl },
-          caption: caption,
-          mimetype: 'video/mp4'
-        }, { quoted: msg });
-      } else if (imageUrl) {
-        // Video එකක් ඇත්තටම නැතිනම් පමණක් Image එක යැවීම
-        await sock.sendMessage(from, {
-          image: { url: imageUrl },
-          caption: caption
-        }, { quoted: msg });
-      } else {
-        await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
-        return await sock.sendMessage(from, { text: "❌ බාගත හැකි Video එකක් හමු නොවීය." }, { quoted: msg });
-      }
+      // 5. Buffer එකක් ලෙස කෙලින්ම Video Stream එක යැවීම
+      await sock.sendMessage(from, {
+        video: { url: videoUrl },
+        caption: caption,
+        mimetype: 'video/mp4'
+      }, { quoted: msg });
 
       await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
 
