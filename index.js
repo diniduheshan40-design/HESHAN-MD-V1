@@ -22,6 +22,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const axios = require("axios");
 
 const {
   restoreCredentials,
@@ -50,7 +51,7 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
-// Global Interactive Sessions (Song, TikTok & Facebook)
+// Global Interactive Sessions (Song, TikTok, Facebook & Video)
 if (!global.songSessions) {
   global.songSessions = new Map();
 }
@@ -59,6 +60,9 @@ if (!global.tiktokSessions) {
 }
 if (!global.fbSessions) {
   global.fbSessions = new Map();
+}
+if (!global.videoSessions) {
+  global.videoSessions = new Map();
 }
 
 app.use(express.json());
@@ -390,6 +394,55 @@ function initBot(sock) {
           } catch (fbSendErr) {
             console.error("FB send error:", fbSendErr);
             await reply("❌ මාධ්‍ය ගොනුව යැවීමේදී දෝෂයක් මතු විය.");
+            return;
+          }
+        }
+      }
+
+      // =========================================================
+      // YOUTUBE VIDEO SELECTION REPLY HANDLER (1, 2, 3, 4)
+      // =========================================================
+      if (quotedMsgId && global.videoSessions && global.videoSessions.has(quotedMsgId)) {
+        const vSession = global.videoSessions.get(quotedMsgId);
+
+        const qualityMap = {
+          "1": "1080p",
+          "2": "720p",
+          "3": "480p",
+          "4": "360p"
+        };
+
+        if (qualityMap[cleanBody]) {
+          const selectedQuality = qualityMap[cleanBody];
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+
+          try {
+            const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
+            const downloadApi = `https://api.chamindu.site/api/v1/youtube/download?url=${encodeURIComponent(vSession.url)}&quality=${selectedQuality}&format=mp4&api_key=${apiKey}`;
+
+            const qRes = await axios.get(downloadApi, { timeout: 45000 });
+            const qData = qRes.data?.data || qRes.data;
+
+            const finalDownloadUrl = qData?.download_url || qData?.direct_url;
+
+            if (!finalDownloadUrl) {
+              await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
+              return await reply(`❌ ${selectedQuality} වීඩියෝ ලින්ක් එක ලබාගැනීමට නොහැකි විය. කරුණාකර වෙනත් Quality එකක් තෝරන්න.`);
+            }
+
+            await sock.sendMessage(from, {
+              video: { url: finalDownloadUrl },
+              caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
+              mimetype: "video/mp4"
+            }, { quoted: msg });
+
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            global.videoSessions.delete(quotedMsgId);
+            return;
+          } catch (dlErr) {
+            console.error("YouTube download error:", dlErr.message);
+            await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
+            await reply(`❌ ${selectedQuality} බාගත කිරීමේ දෝෂයක් මතු විය: ${dlErr.message}`);
             return;
           }
         }
