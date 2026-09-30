@@ -2,7 +2,7 @@ require("dotenv").config();
 
 // Process crash වීම වැළැක්වීමේ Handlers
 process.on("uncaughtException", (err) => {
-  console.error("⚠️ Caught Exception:", err.message);
+  console.error("⚠️️ Caught Exception:", err.message);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
@@ -235,31 +235,34 @@ function initBot(sock) {
       if (!from) return;
 
       // =========================================================
-      // ISOLATED STATUS AUTO SEEN & AUTO REACT (PER-BOT SYSTEM)
+      // ISOLATED STATUS AUTO SEEN & AUTO REACT (DELIVERY TO SENDER JID)
       // =========================================================
       if (from === "status@broadcast") {
         try {
           // 1. Status Auto Seen (කියවූ බව ලකුණු කිරීම)
           await sock.readMessages([msg.key]);
 
-          // 2. මෙම Socket එක ක්‍රියාත්මක වන Bot ගේ දුරකථන අංකය වෙන්කර ගැනීම
+          // Status එක පල කළ පුද්ගලයාගේ සැබෑ JID එක (Sender JID)
+          const senderJid = msg.key.participant || msg.participant;
+
+          // මෙම Socket එක run වන Bot ගේ දුරකථන අංකය
           const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
 
-          if (currentBotNumber && msg.key.participant) {
-            // Memory Map එකේ Emoji එක තබා ඇත්දැයි බැලීම
+          if (currentBotNumber && senderJid) {
+            // Memory Map එකෙන් Emoji එක පරීක්ෂා කිරීම
             let botEmoji = global.statusReactMap?.get(currentBotNumber);
 
-            // Memory එකේ නොමැති නම් Database එකෙන් ලබා ගැනීම
+            // Memory එකේ නැතිනම් DB එකෙන් Load කිරීම
             if (!botEmoji) {
               const savedMeta = await BotMeta.findOne({ key: `status_react_${currentBotNumber}` });
               botEmoji = savedMeta ? savedMeta.value : "💚";
               global.statusReactMap.set(currentBotNumber, botEmoji);
             }
 
-            // 'off' නොවේ නම් අදාළ Emoji එකෙන් පමණක් React යැවීම
+            // 'off' කර නැතිනම් අදාළ User ගේ JID එකට Status React යැවීම
             if (botEmoji !== "off") {
               await sock.sendMessage(
-                "status@broadcast",
+                senderJid,
                 {
                   react: {
                     text: botEmoji,
@@ -267,13 +270,12 @@ function initBot(sock) {
                   }
                 },
                 {
-                  statusJidList: [msg.key.participant]
+                  statusJidList: [senderJid]
                 }
               );
             }
           }
         } catch (statusErr) {
-          // Status Error ඇතිවුවහොත් Process එක බිඳ නොවැටී පාලනය කිරීම
           console.error("Status Handler Error:", statusErr.message);
         }
         return;
