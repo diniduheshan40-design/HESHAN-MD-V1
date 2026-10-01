@@ -2,7 +2,7 @@ require("dotenv").config();
 
 // Process crash වීම වැළැක්වීමේ Handlers
 process.on("uncaughtException", (err) => {
-  console.error("⚠️ Caught Exception:", err.message);
+  console.error("⚠️️ Caught Exception:", err.message);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
@@ -337,7 +337,6 @@ function initBot(sock) {
             } else if (cleanBody === "2") {
               await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
             } else if (cleanBody === "3") {
-              // Song PTT conversion
               const songRes = await axios.get(session.url, { responseType: "arraybuffer", timeout: 45000 });
               const voiceBuf = await convertToWhatsAppVoice(Buffer.from(songRes.data));
               await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
@@ -351,15 +350,12 @@ function initBot(sock) {
         }
       }
 
-      // ============================================================
-      // TIKTOK 1, 2, 3 INTERACTIVE SELECTION HANDLER
-      // ============================================================
+      // TikTok Handler
       if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
         const ttSession = global.tiktokSessions.get(quotedMsgId);
         if (["1", "2", "3"].includes(cleanBody)) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
-            // [1] HD Video Download
             if (cleanBody === "1") {
               const videoUrl = ttSession.hdVideo || ttSession.sdVideo;
               if (!videoUrl) throw new Error("HD Video Link හමු නොවීය.");
@@ -368,9 +364,7 @@ function initBot(sock) {
                 caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
-            } 
-            // [2] SD Video Download
-            else if (cleanBody === "2") {
+            } else if (cleanBody === "2") {
               const videoUrl = ttSession.sdVideo || ttSession.hdVideo;
               if (!videoUrl) throw new Error("SD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
@@ -378,9 +372,7 @@ function initBot(sock) {
                 caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
-            } 
-            // [3] Real WhatsApp Playable Voice Note (PTT)
-            else if (cleanBody === "3") {
+            } else if (cleanBody === "3") {
               if (!ttSession.audioUrl) throw new Error("Audio Link හමු නොවීය.");
 
               const rawAudioRes = await axios.get(ttSession.audioUrl, {
@@ -463,9 +455,88 @@ function initBot(sock) {
         }
       }
 
+      // ============================================================
+      // EMOJI VOICE REACTION SYSTEM (DEFAULT: OFF)
+      // ============================================================
+      if (global.evoiceEnabled === undefined) {
+        try {
+          const evData = await BotMeta.findOne({ key: "evoice_status" });
+          global.evoiceEnabled = evData ? Boolean(evData.value) : false; // Default OFF
+        } catch (e) {
+          global.evoiceEnabled = false;
+        }
+      }
+
+      // Commands (. / # ! etc) නොවන සාමාන්‍ය message වලදී පමණක් ක්‍රියාත්මක වීම
+      const prefixesList = [".", "!", "#", "/"];
+      const isCmdStart = prefixesList.some(p => cleanBody.startsWith(p));
+
+      if (global.evoiceEnabled && cleanBody && !isCmdStart) {
+        const emojiVoiceMap = {
+          "🙏": "https://files.catbox.moe/1e2359.opus",
+          "☸️": "https://files.catbox.moe/1e2359.opus",
+          "🌹": "https://files.catbox.moe/uxm1re.opus",
+          "💆‍♂️": "https://files.catbox.moe/uxm1re.opus",
+          "😅": "https://files.catbox.moe/cvv435.opus",
+          "🤣": "https://files.catbox.moe/cvv435.opus",
+          "😂": "https://files.catbox.moe/cvv435.opus",
+          "🫢": "https://files.catbox.moe/i2uw0g.opus",
+          "🌚": "https://files.catbox.moe/i2uw0g.opus",
+          "💇‍♂️": "https://files.catbox.moe/i2uw0g.opus",
+          "🫣": "https://files.catbox.moe/oqfsdl.opus",
+          "🤪": "https://files.catbox.moe/oqfsdl.opus",
+          "😜": "https://files.catbox.moe/oqfsdl.opus",
+          "🥵": "https://files.catbox.moe/bfwnvj.opus",
+          "🤤": "https://files.catbox.moe/bfwnvj.opus",
+          "🍑": "https://files.catbox.moe/bfwnvj.opus",
+          "🫀": "https://files.catbox.moe/bke4vj.opus",
+          "💔": "https://files.catbox.moe/bke4vj.opus",
+          "🙇‍♂️": "https://files.catbox.moe/bke4vj.opus",
+          "🥺": "https://files.catbox.moe/o5270o.opus",
+          "😭": "https://files.catbox.moe/o5270o.opus",
+          "🥹": "https://files.catbox.moe/o5270o.opus"
+        };
+
+        let targetAudio = null;
+
+        // 1. තනි Emoji එකක් පමණක් එවූ විට
+        if (emojiVoiceMap[cleanBody]) {
+          targetAudio = emojiVoiceMap[cleanBody];
+        } 
+        // 2. Sentence / වචනයක අවසානයේ Emoji එක තිබූ විට පමණක් (වචන මැද තිබුණොත් නොසලකා හරියි)
+        else {
+          for (const emoji of Object.keys(emojiVoiceMap)) {
+            if (cleanBody.endsWith(emoji)) {
+              targetAudio = emojiVoiceMap[emoji];
+              break;
+            }
+          }
+        }
+
+        if (targetAudio) {
+          try {
+            const audioStream = await axios.get(targetAudio, {
+              responseType: "arraybuffer",
+              timeout: 25000,
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+            });
+
+            const voiceBuf = await convertToWhatsAppVoice(Buffer.from(audioStream.data));
+
+            await sock.sendMessage(from, {
+              audio: voiceBuf,
+              mimetype: "audio/ogg; codecs=opus",
+              ptt: true
+            }, { quoted: msg });
+            return;
+          } catch (evErr) {
+            console.error("Emoji Voice Send Error:", evErr.message);
+          }
+        }
+      }
+
       // Command Execution
-      const prefixes = [".", "!", "#", "/"];
-      const prefix = prefixes.find(p => body.startsWith(p));
+      const prefix = prefixesList.find(p => body.startsWith(p));
       if (!prefix) return;
 
       const args = body.slice(prefix.length).trim().split(/ +/);
