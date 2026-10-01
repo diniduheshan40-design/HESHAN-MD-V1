@@ -13,7 +13,7 @@ module.exports = {
       const url = args[0]?.trim();
       if (!url) {
         return await sock.sendMessage(from, { 
-          text: `⚠️️ කරුණාකර TikTok Video Link එකක් ලබාදෙන්න!\n*උදාහරණ:* \`.tt https://vt.tiktok.com/xxxxxx/\`` 
+          text: `⚠️ *කරුණාකර TikTok Video Link එකක් ලබාදෙන්න!*\n\n*උදාහරණ:* \`.tt https://vt.tiktok.com/xxxxxx/\`` 
         }, { quoted: msg });
       }
 
