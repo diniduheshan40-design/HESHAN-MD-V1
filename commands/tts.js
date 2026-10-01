@@ -1,305 +1,407 @@
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { execFile } = require('child_process');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { execFile } = require("child_process");
+
+const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
+
+function runFFmpeg(args) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      ffmpegPath,
+      args,
+      {
+        windowsHide: true,
+        maxBuffer: 20 * 1024 * 1024
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error("[FFMPEG]", stderr);
+          return reject(error);
+        }
+
+        resolve({
+          stdout,
+          stderr
+        });
+      }
+    );
+  });
+}
+
+async function getDuration(file) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      ffmpegPath,
+      [
+        "-i",
+        file
+      ],
+      {
+        windowsHide: true,
+        maxBuffer: 10 * 1024 * 1024
+      },
+      (error, stdout, stderr) => {
+
+        const output = `${stdout}\n${stderr}`;
+
+        const match = output.match(
+          /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i
+        );
+
+        if (!match) {
+          return resolve(0);
+        }
+
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        const seconds = Number(match[3]);
+
+        resolve(
+          Math.ceil(
+            hours * 3600 +
+            minutes * 60 +
+            seconds
+          )
+        );
+      }
+    );
+  });
+}
 
 module.exports = {
-  name: 'tts',
-  alias: ['speak', 'say', 'voice', 'girl'],
-  desc: 'Text to Speech WhatsApp Voice Note',
-  category: 'convert',
 
-  async execute(sock, msg, args, chatJid, extra = {}) {
+  name: "tts",
+
+  alias: [
+    "speak",
+    "say",
+    "voice",
+    "girl"
+  ],
+
+  desc: "Text to Speech WhatsApp Voice Note",
+
+  category: "convert",
+
+  async execute(
+    sock,
+    msg,
+    args,
+    chatJid,
+    extra = {}
+  ) {
 
     let inputFile = null;
     let outputFile = null;
 
     try {
 
-      // ==========================================================
-      // GET TEXT
-      // ==========================================================
+      // ======================================================
+      // TEXT
+      // ======================================================
 
-      let text = args.join(' ').trim();
+      let text = args.join(" ").trim();
 
       const quoted =
-        msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        msg.message
+          ?.extendedTextMessage
+          ?.contextInfo
+          ?.quotedMessage;
 
       if (!text && quoted) {
+
         text =
           quoted.conversation ||
           quoted.extendedTextMessage?.text ||
           quoted.imageMessage?.caption ||
           quoted.videoMessage?.caption ||
-          '';
+          "";
       }
 
       text = String(text).trim();
 
       if (!text) {
+
         return await sock.sendMessage(
           chatJid,
           {
             text:
               `🎙️ *TTS VOICE*\n\n` +
               `හඬ බවට පත් කිරීමට text එකක් දෙන්න.\n\n` +
-              `*Examples:*\n` +
-              `.tts කොහොමද ඔයාට\n` +
-              `.tts Hello cute girl`
+              `*.tts කොහොමද ඔයාට*\n` +
+              `*.tts Hello cute girl*`
           },
-          { quoted: msg }
+          {
+            quoted: msg
+          }
         );
       }
 
-      // ==========================================================
+      // ======================================================
       // REACTION
-      // ==========================================================
+      // ======================================================
 
-      await sock.sendMessage(chatJid, {
-        react: {
-          text: '🎙️',
-          key: msg.key
+      await sock.sendMessage(
+        chatJid,
+        {
+          react: {
+            text: "🎙️",
+            key: msg.key
+          }
         }
-      });
+      );
 
-      // ==========================================================
-      // LANGUAGE
-      // ==========================================================
+      // ======================================================
+      // TTS API
+      // ======================================================
 
-      const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
+      const hasSinhala =
+        /[\u0D80-\u0DFF]/.test(text);
 
       let audioUrl;
 
       if (hasSinhala) {
 
         audioUrl =
-          'https://translate.google.com/translate_tts' +
-          '?ie=UTF-8' +
-          '&client=tw-ob' +
-          '&tl=si' +
-          '&q=' + encodeURIComponent(text);
+          "https://translate.google.com/translate_tts" +
+          "?ie=UTF-8" +
+          "&client=tw-ob" +
+          "&tl=si" +
+          "&q=" +
+          encodeURIComponent(text);
 
       } else {
 
         audioUrl =
-          'https://api.streamelements.com/kappa/v2/speech' +
-          '?voice=Salli' +
-          '&text=' + encodeURIComponent(text);
-      }
-
-      console.log('[TTS] Language:', hasSinhala ? 'Sinhala' : 'English');
-      console.log('[TTS] Text:', text);
-
-      // ==========================================================
-      // DOWNLOAD AUDIO
-      // ==========================================================
-
-      const response = await axios.get(audioUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30000,
-
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36',
-          'Accept':
-            'audio/mpeg,audio/*,*/*;q=0.8'
-        }
-      });
-
-      const audioBuffer = Buffer.from(response.data);
-
-      if (!audioBuffer.length) {
-        throw new Error('TTS API returned empty audio');
+          "https://api.streamelements.com/kappa/v2/speech" +
+          "?voice=Salli" +
+          "&text=" +
+          encodeURIComponent(text);
       }
 
       console.log(
-        '[TTS] Downloaded:',
-        audioBuffer.length,
-        'bytes'
+        "[TTS] Request:",
+        text
       );
 
-      // ==========================================================
-      // TEMP FILES
-      // ==========================================================
+      // ======================================================
+      // DOWNLOAD
+      // ======================================================
+
+      const response =
+        await axios.get(
+          audioUrl,
+          {
+            responseType: "arraybuffer",
+
+            timeout: 30000,
+
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0"
+            }
+          }
+        );
+
+      const inputBuffer =
+        Buffer.from(response.data);
+
+      if (!inputBuffer.length) {
+        throw new Error(
+          "TTS returned empty audio"
+        );
+      }
+
+      // ======================================================
+      // TEMP FILE
+      // ======================================================
 
       const id =
-        `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        Date.now() +
+        "_" +
+        Math.random()
+          .toString(36)
+          .substring(2, 8);
 
       inputFile = path.join(
         os.tmpdir(),
-        `darkdinu_tts_${id}.mp3`
+        `tts_${id}.mp3`
       );
 
       outputFile = path.join(
         os.tmpdir(),
-        `darkdinu_voice_${id}.ogg`
+        `voice_${id}.ogg`
       );
 
-      fs.writeFileSync(inputFile, audioBuffer);
+      fs.writeFileSync(
+        inputFile,
+        inputBuffer
+      );
 
-      // ==========================================================
-      // FFMPEG
-      // ==========================================================
+      // ======================================================
+      // IMPORTANT
+      // WHATSAPP PTT OGG / OPUS
+      // ======================================================
 
-      await new Promise((resolve, reject) => {
+      await runFFmpeg([
+        "-y",
 
-        const ffmpegArgs = [
-          '-y',
+        "-hide_banner",
 
-          '-i',
-          inputFile,
+        "-loglevel",
+        "error",
 
-          // Audio only
-          '-vn',
+        "-i",
+        inputFile,
 
-          // WhatsApp compatible Opus
-          '-c:a',
-          'libopus',
+        "-vn",
 
-          // Mono
-          '-ac',
-          '1',
+        // OPUS
+        "-c:a",
+        "libopus",
 
-          // WhatsApp voice frequency
-          '-ar',
-          '48000',
+        // WhatsApp voice
+        "-ar",
+        "16000",
 
-          // Voice bitrate
-          '-b:a',
-          '32k',
+        // MONO
+        "-ac",
+        "1",
 
-          // Voice optimized
-          '-application',
-          'voip',
+        // Voice bitrate
+        "-b:a",
+        "32k",
 
-          // Important timestamp fix
-          '-avoid_negative_ts',
-          'make_zero',
+        // Voice optimized
+        "-application",
+        "voip",
 
-          // Remove metadata
-          '-map_metadata',
-          '-1',
+        // Better WhatsApp compatibility
+        "-compression_level",
+        "10",
 
-          // OGG container
-          '-f',
-          'ogg',
+        "-frame_duration",
+        "60",
 
-          outputFile
-        ];
+        "-packet_loss",
+        "0",
 
-        console.log(
-          '[TTS] Running FFmpeg...'
-        );
+        // Fix timestamp
+        "-avoid_negative_ts",
+        "make_zero",
 
-        const process = execFile(
-          ffmpegPath,
-          ffmpegArgs,
-          {
-            windowsHide: true,
-            maxBuffer: 10 * 1024 * 1024
-          },
-          (error, stdout, stderr) => {
+        // Remove metadata
+        "-map_metadata",
+        "-1",
 
-            if (error) {
-              console.error(
-                '[FFMPEG ERROR]',
-                stderr
-              );
+        // OGG container
+        "-f",
+        "ogg",
 
-              return reject(
-                new Error(
-                  `FFmpeg failed: ${error.message}`
-                )
-              );
-            }
+        outputFile
+      ]);
 
-            resolve();
-          }
-        );
-
-        process.on('error', reject);
-      });
-
-      // ==========================================================
-      // CHECK OGG FILE
-      // ==========================================================
+      // ======================================================
+      // CHECK FILE
+      // ======================================================
 
       if (!fs.existsSync(outputFile)) {
         throw new Error(
-          'FFmpeg did not create OGG file'
+          "OGG file was not created"
         );
       }
 
-      const oggBuffer =
+      const voiceBuffer =
         fs.readFileSync(outputFile);
 
-      if (oggBuffer.length < 1000) {
+      if (voiceBuffer.length < 1000) {
         throw new Error(
-          'Generated OGG file is too small'
+          "Generated voice file is invalid"
         );
       }
 
-      // OGG files MUST start with "OggS"
-      const oggHeader =
-        oggBuffer.subarray(0, 4).toString();
+      // OGG signature
+      const header =
+        voiceBuffer
+          .subarray(0, 4)
+          .toString();
 
-      console.log(
-        '[TTS] OGG Header:',
-        oggHeader
-      );
+      if (header !== "OggS") {
 
-      if (oggHeader !== 'OggS') {
         throw new Error(
-          'Generated file is not a valid OGG file'
+          "Generated audio is not a valid OGG file"
         );
       }
 
+      // ======================================================
+      // DURATION
+      // ======================================================
+
+      let seconds =
+        await getDuration(outputFile);
+
+      if (!seconds || seconds < 1) {
+        seconds = 1;
+      }
+
       console.log(
-        '[TTS] Valid OGG/Opus:',
-        oggBuffer.length,
-        'bytes'
+        "[TTS] Duration:",
+        seconds,
+        "seconds"
       );
 
-      // ==========================================================
-      // SEND AS REAL WHATSAPP VOICE NOTE
-      // ==========================================================
+      console.log(
+        "[TTS] OGG:",
+        voiceBuffer.length,
+        "bytes"
+      );
+
+      // ======================================================
+      // SEND WHATSAPP PTT
+      // ======================================================
 
       await sock.sendMessage(
         chatJid,
         {
-          audio: oggBuffer,
+          audio: voiceBuffer,
 
-          mimetype: 'audio/ogg; codecs=opus',
+          mimetype:
+            "audio/ogg; codecs=opus",
 
-          // ⭐ REAL VOICE MESSAGE
-          ptt: true
+          ptt: true,
+
+          // Current Baileys supports this
+          seconds: seconds
         },
         {
           quoted: msg
         }
       );
 
-      // ==========================================================
+      // ======================================================
       // SUCCESS
-      // ==========================================================
+      // ======================================================
 
-      await sock.sendMessage(chatJid, {
-        react: {
-          text: '💋',
-          key: msg.key
+      await sock.sendMessage(
+        chatJid,
+        {
+          react: {
+            text: "💋",
+            key: msg.key
+          }
         }
-      });
+      );
 
       console.log(
-        '[TTS] Voice note sent successfully'
+        "[TTS] Voice sent successfully"
       );
 
     } catch (error) {
 
       console.error(
-        '[DARK DINU TTS ERROR]',
+        "[TTS ERROR]",
         error
       );
 
@@ -309,55 +411,49 @@ module.exports = {
           chatJid,
           {
             text:
-              `❌ *TTS Voice Error*\n\n` +
-              `${error.message || 'Unknown error'}`
+              `❌ *TTS Error*\n\n` +
+              `${error.message}`
           },
           {
             quoted: msg
           }
         );
 
-      } catch (sendError) {
+      } catch (e) {
 
         console.error(
-          '[TTS SEND ERROR]',
-          sendError.message
+          "[TTS SEND ERROR]",
+          e.message
         );
       }
 
     } finally {
 
-      // ==========================================================
-      // CLEAN TEMP FILES
-      // ==========================================================
+      // ======================================================
+      // CLEAN
+      // ======================================================
 
       try {
+
         if (
           inputFile &&
           fs.existsSync(inputFile)
         ) {
           fs.unlinkSync(inputFile);
         }
-      } catch (e) {
-        console.log(
-          '[TTS] Input cleanup error:',
-          e.message
-        );
-      }
+
+      } catch (e) {}
 
       try {
+
         if (
           outputFile &&
           fs.existsSync(outputFile)
         ) {
           fs.unlinkSync(outputFile);
         }
-      } catch (e) {
-        console.log(
-          '[TTS] Output cleanup error:',
-          e.message
-        );
-      }
+
+      } catch (e) {}
     }
   }
 };
