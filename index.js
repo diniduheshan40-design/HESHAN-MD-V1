@@ -258,7 +258,6 @@ function initBot(sock) {
       const isGroup = from.endsWith("@g.us");
       const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
 
-      // බොට් දුවන නම්බර් එකෙන් ආවොත් (fromMe) sender එක bot number එක ලෙස තහවුරු කරයි
       let sender = isGroup ? msg.key.participant : from;
       if (msg.key.fromMe) {
         sender = `${currentBotNumber}@s.whatsapp.net`;
@@ -273,10 +272,9 @@ function initBot(sock) {
 
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
       const cleanBody = body.trim();
-
       const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
 
-      // Access Control: Developer, Bot Owner, සහ General Users
+      // Access Level Controls
       const isDev = Boolean(
         senderClean === DEVELOPER_NUMBER ||
         senderClean === DEVELOPER_LID ||
