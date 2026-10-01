@@ -16,11 +16,32 @@ const {
 const logger = pino({ level: "silent" });
 
 const sessionDir = path.join(__dirname, "session");
+const botIdFile = path.join(__dirname, ".bot_identity");
 
 let activeSocket = null;
 let reconnectTimer = null;
 let isReconnecting = false;
 let onSocketCreatedCallback = null;
+
+// Session ID එක dynamic ලෙස හඳුනාගැනීම
+function getCurrentSessionId() {
+  if (process.env.SESSION_ID && process.env.SESSION_ID.trim()) {
+    return process.env.SESSION_ID.trim();
+  }
+  if (fs.existsSync(botIdFile)) {
+    try {
+      const saved = fs.readFileSync(botIdFile, "utf8").trim();
+      if (saved) return saved;
+    } catch (e) {}
+  }
+  return "dark_dinu_session";
+}
+
+function setBotIdentity(identifier) {
+  try {
+    fs.writeFileSync(botIdFile, identifier, "utf8");
+  } catch (e) {}
+}
 
 /* =========================================================
    MONGODB SESSION MODEL
@@ -80,8 +101,9 @@ async function restoreCredentials() {
   ensureSessionDir();
 
   try {
+    const currentId = getCurrentSessionId();
     const data = await SessionModel.findOne({
-      sessionId: "dark_dinu_session"
+      sessionId: currentId
     }).lean();
 
     if (
@@ -89,7 +111,7 @@ async function restoreCredentials() {
       !data.files ||
       Object.keys(data.files).length === 0
     ) {
-      console.log("ℹ️ [SESSION] No saved session found in MongoDB.");
+      console.log(`ℹ️ [SESSION] No saved session found in MongoDB for: ${currentId}`);
       return false;
     }
 
@@ -124,7 +146,7 @@ async function restoreCredentials() {
     }
 
     console.log(
-      `✅ [SESSION] Restored ${count} session files from MongoDB.`
+      `✅ [SESSION] Restored ${count} session files for [${currentId}] from MongoDB.`
     );
 
     return true;
@@ -148,10 +170,7 @@ async function backupAllCredentials() {
     ensureSessionDir();
 
     const files = {};
-
-    const allFiles = fs.readdirSync(
-      sessionDir
-    );
+    const allFiles = fs.readdirSync(sessionDir);
 
     for (const fileName of allFiles) {
       const filePath = path.join(
@@ -179,9 +198,11 @@ async function backupAllCredentials() {
       return;
     }
 
+    const currentId = getCurrentSessionId();
+
     await SessionModel.findOneAndUpdate(
       {
-        sessionId: "dark_dinu_session"
+        sessionId: currentId
       },
       {
         $set: {
@@ -194,7 +215,7 @@ async function backupAllCredentials() {
     );
 
     console.log(
-      "⚡ [SESSION] Synced with MongoDB Atlas!"
+      `⚡ [SESSION] Synced [${currentId}] with MongoDB Atlas!`
     );
 
   } catch (error) {
@@ -223,10 +244,6 @@ async function createSocket(isPairing = false) {
     version
   } = await fetchLatestBaileysVersion();
 
-  /* -------------------------------------------------------
-     CLOSE OLD SOCKET
-  ------------------------------------------------------- */
-
   if (activeSocket) {
     try {
       activeSocket.ev.removeAllListeners();
@@ -236,54 +253,43 @@ async function createSocket(isPairing = false) {
     activeSocket = null;
   }
 
-  /* -------------------------------------------------------
-     CREATE WHATSAPP SOCKET
-  ------------------------------------------------------- */
-
   const sock = makeWASocket({
     version,
-
     logger,
-
     auth: {
       creds: state.creds,
-
       keys: makeCacheableSignalKeyStore(
         state.keys,
         logger
       )
     },
-
     browser: Browsers.windows(
       "Chrome"
     ),
-
     printQRInTerminal: false,
-
     syncFullHistory: false,
-
     markOnlineOnConnect: false,
-
     connectTimeoutMs: 60000,
-
     keepAliveIntervalMs: 15000,
-
     defaultQueryTimeoutMs: 60000,
-
     emitOwnEvents: true
   });
 
   activeSocket = sock;
-
-  /* =======================================================
-     SAVE CREDENTIALS
-  ======================================================= */
 
   sock.ev.on(
     "creds.update",
     async () => {
       try {
         await saveCreds();
+
+        // Bot phone number එක assign වූ පසු dynamic session ID එක register කිරීම
+        if (sock.user?.id) {
+          const rawNum = sock.user.id.split(":")[0].replace(/[^0-9]/g, "");
+          if (rawNum) {
+            setBotIdentity(`dinu_bot_${rawNum}`);
+          }
+        }
 
         await backupAllCredentials();
 
@@ -296,10 +302,6 @@ async function createSocket(isPairing = false) {
     }
   );
 
-  /* =======================================================
-     CONNECTION UPDATE
-  ======================================================= */
-
   sock.ev.on(
     "connection.update",
     async (update) => {
@@ -310,63 +312,44 @@ async function createSocket(isPairing = false) {
         isNewLogin
       } = update;
 
-      /* ---------------------------------------------------
-         NEW LOGIN DETECTED
-      --------------------------------------------------- */
-
       if (isNewLogin) {
-
         console.log(
           "🎉 [PAIRING] WhatsApp pairing accepted!"
         );
 
-        /*
-         * WhatsApp/Baileys may require the socket
-         * to restart after successful pairing.
-         */
-
         if (isPairing) {
-
           setTimeout(async () => {
-
             try {
-
               console.log(
                 "🔄 [PAIRING] Restarting socket after successful pairing..."
               );
-
               isReconnecting = true;
-
               await createSocket(false);
-
             } catch (error) {
-
               console.error(
                 "❌ [PAIRING] Restart failed:",
                 error.message
               );
-
             } finally {
-
               isReconnecting = false;
-
             }
-
           }, 1500);
         }
       }
 
-      /* ---------------------------------------------------
-         CONNECTION OPEN
-      --------------------------------------------------- */
-
       if (connection === "open") {
-
         isReconnecting = false;
 
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
+        }
+
+        if (sock.user?.id) {
+          const rawNum = sock.user.id.split(":")[0].replace(/[^0-9]/g, "");
+          if (rawNum) {
+            setBotIdentity(`dinu_bot_${rawNum}`);
+          }
         }
 
         console.log(
@@ -377,12 +360,7 @@ async function createSocket(isPairing = false) {
         await backupAllCredentials();
       }
 
-      /* ---------------------------------------------------
-         CONNECTION CLOSE
-      --------------------------------------------------- */
-
       if (connection === "close") {
-
         const statusCode =
           lastDisconnect?.error?.output?.statusCode;
 
@@ -390,42 +368,29 @@ async function createSocket(isPairing = false) {
           `⚠️ [SOCKET] Connection closed. Status Code: ${statusCode}`
         );
 
-        /* -------------------------------------------------
-           LOGGED OUT
-        ------------------------------------------------- */
-
         if (
           statusCode ===
           DisconnectReason.loggedOut
         ) {
-
           console.log(
             "🚪 [SOCKET] Logged out from WhatsApp."
           );
 
+          const currentId = getCurrentSessionId();
           await SessionModel.deleteOne({
-            sessionId:
-              "dark_dinu_session"
+            sessionId: currentId
           }).catch(() => {});
 
           deleteSessionDir();
-
           activeSocket = null;
-
           return;
         }
-
-        /* -------------------------------------------------
-           IMPORTANT:
-           PAIRING CODE SUCCESS CAN RETURN 515
-           ------------------------------------------------- */
 
         if (
           isPairing &&
           statusCode ===
           DisconnectReason.restartRequired
         ) {
-
           console.log(
             "🔄 [PAIRING] Restart required after pairing. Reconnecting..."
           );
@@ -436,26 +401,17 @@ async function createSocket(isPairing = false) {
 
           reconnectTimer = setTimeout(
             async () => {
-
               try {
-
                 isReconnecting = true;
-
                 await createSocket(false);
-
               } catch (error) {
-
                 console.error(
                   "❌ [PAIRING] Reconnect error:",
                   error.message
                 );
-
               } finally {
-
                 isReconnecting = false;
-
               }
-
             },
             1500
           );
@@ -463,12 +419,7 @@ async function createSocket(isPairing = false) {
           return;
         }
 
-        /* -------------------------------------------------
-           NORMAL AUTO RECONNECT
-        ------------------------------------------------- */
-
         if (!isReconnecting) {
-
           isReconnecting = true;
 
           if (reconnectTimer) {
@@ -486,28 +437,19 @@ async function createSocket(isPairing = false) {
 
           reconnectTimer = setTimeout(
             async () => {
-
               try {
-
                 console.log(
                   "🔄 [SOCKET] Auto reconnecting..."
                 );
-
                 await createSocket(false);
-
               } catch (error) {
-
                 console.error(
                   "❌ [SOCKET] Auto reconnect error:",
                   error.message
                 );
-
               } finally {
-
                 isReconnecting = false;
-
               }
-
             },
             delayMs
           );
@@ -515,10 +457,6 @@ async function createSocket(isPairing = false) {
       }
     }
   );
-
-  /* =======================================================
-     SOCKET CREATED CALLBACK
-  ======================================================= */
 
   if (onSocketCreatedCallback) {
     onSocketCreatedCallback(sock);
@@ -532,7 +470,6 @@ async function createSocket(isPairing = false) {
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
-
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -540,37 +477,21 @@ async function requestPairCode(phoneNumber) {
 
   isReconnecting = true;
 
-  /* -------------------------------------------------------
-     REMOVE OLD PAIRING SESSION
-  ------------------------------------------------------- */
-
-  deleteSessionDir();
-  ensureSessionDir();
-
-  /* -------------------------------------------------------
-     CREATE FRESH SOCKET
-  ------------------------------------------------------- */
-
-  const sock = await createSocket(true);
-
   let cleanNumber = String(
     phoneNumber
   ).replace(/[^0-9]/g, "");
 
-  /*
-   * Sri Lanka:
-   * 0712345678
-   * becomes
-   * 94712345678
-   */
-
-  if (
-    cleanNumber.startsWith("0")
-  ) {
-    cleanNumber =
-      "94" +
-      cleanNumber.substring(1);
+  if (cleanNumber.startsWith("0")) {
+    cleanNumber = "94" + cleanNumber.substring(1);
   }
+
+  // අදාළ නම්බර් එකට අනන්‍ය Dynamic Session Identifier එකක් Set කිරීම
+  setBotIdentity(`dinu_bot_${cleanNumber}`);
+
+  deleteSessionDir();
+  ensureSessionDir();
+
+  const sock = await createSocket(true);
 
   console.log(
     `📱 [PAIRING] Requesting pairing code for ${cleanNumber}`
@@ -578,12 +499,10 @@ async function requestPairCode(phoneNumber) {
 
   return new Promise(
     (resolve, reject) => {
-
       let finished = false;
       let codeRequested = false;
 
       const cleanup = () => {
-
         sock.ev.off(
           "connection.update",
           onUpdate
@@ -596,44 +515,27 @@ async function requestPairCode(phoneNumber) {
 
       const timeout = setTimeout(
         () => {
-
           if (finished) return;
-
           finished = true;
-
           cleanup();
-
           isReconnecting = false;
-
           reject(
             new Error(
               "Pairing code timeout. Please try again."
             )
           );
-
         },
         30000
       );
 
       const requestCode = async () => {
+        if (finished || codeRequested) return;
 
-        if (
-          finished ||
-          codeRequested
-        ) {
-          return;
-        }
-
-        if (
-          sock.authState?.creds?.registered
-        ) {
-          return;
-        }
+        if (sock.authState?.creds?.registered) return;
 
         codeRequested = true;
 
         try {
-
           console.log(
             "🔐 [PAIRING] Requesting WhatsApp pairing code..."
           );
@@ -654,9 +556,7 @@ async function requestPairCode(phoneNumber) {
           );
 
           finished = true;
-
           cleanup();
-
           isReconnecting = false;
 
           resolve({
@@ -665,82 +565,42 @@ async function requestPairCode(phoneNumber) {
           });
 
         } catch (error) {
-
           finished = true;
-
           cleanup();
-
           isReconnecting = false;
-
           console.error(
             "❌ [PAIRING] Code request failed:",
             error.message
           );
-
           reject(error);
         }
       };
 
-      const onUpdate = async (
-        update
-      ) => {
-
+      const onUpdate = async (update) => {
         if (finished) return;
 
-        const {
-          connection,
-          qr
-        } = update;
+        const { connection, qr } = update;
 
         console.log(
           `🔌 [PAIRING] connection=${connection || "none"} qr=${qr ? "yes" : "no"}`
         );
 
-        /*
-         * Official Baileys pairing flow:
-         * wait until connecting / QR event
-         */
-
-        if (
-          connection === "connecting" ||
-          !!qr
-        ) {
-
+        if (connection === "connecting" || !!qr) {
           await delay(1000);
-
           await requestCode();
         }
       };
 
-      sock.ev.on(
-        "connection.update",
-        onUpdate
-      );
+      sock.ev.on("connection.update", onUpdate);
 
-      /*
-       * Fallback:
-       * Sometimes the first connection.update
-       * happens before our listener attaches.
-       */
-
-      setTimeout(
-        async () => {
-
-          if (
-            !finished &&
-            !codeRequested
-          ) {
-
-            console.log(
-              "⏳ [PAIRING] Fallback pairing request..."
-            );
-
-            await requestCode();
-          }
-
-        },
-        4000
-      );
+      setTimeout(async () => {
+        if (!finished && !codeRequested) {
+          console.log(
+            "⏳ [PAIRING] Fallback pairing request..."
+          );
+          await requestCode();
+        }
+      }, 4000);
     }
   );
 }
@@ -750,23 +610,17 @@ async function requestPairCode(phoneNumber) {
 ========================================================= */
 
 async function startSavedSocket() {
-
   ensureSessionDir();
 
-  const credsFile =
-    path.join(
-      sessionDir,
-      "creds.json"
-    );
+  const credsFile = path.join(
+    sessionDir,
+    "creds.json"
+  );
 
-  if (
-    !fs.existsSync(credsFile)
-  ) {
-
+  if (!fs.existsSync(credsFile)) {
     console.log(
       "ℹ️ [SOCKET] No saved WhatsApp credentials."
     );
-
     return null;
   }
 
@@ -782,20 +636,13 @@ async function startSavedSocket() {
 ========================================================= */
 
 module.exports = {
-
   restoreCredentials,
-
   backupAllCredentials,
-
   requestPairCode,
-
   startSavedSocket,
-
   onSocketCreated: (callback) => {
-    onSocketCreatedCallback =
-      callback;
+    onSocketCreatedCallback = callback;
   },
-
   getActiveSocket: () => {
     return activeSocket;
   }
