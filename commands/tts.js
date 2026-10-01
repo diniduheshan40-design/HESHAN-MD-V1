@@ -13,16 +13,13 @@ try {
   ffmpegPath = "ffmpeg";
 }
 
-// FreeTTS.org API Configuration
+// FreeTTS.org Official Configuration
 const FREETTS_API_KEY = "ft_live_EZmwd9gPjDLUjaT1EX39Z97tuMbtpDMj";
 
-// Voice Selection
-// Female / Male voices
+// Ultra High Quality Neural Voices
 const VOICES = {
-  girl: "en-US-JennyNeural",   // Natural Female
-  boy: "en-US-GuyNeural",      // Natural Male
-  si_girl: "si-LK-ThiliniNeural", // Sinhala Female (if supported)
-  si_boy: "si-LK-SameeraNeural"   // Sinhala Male (if supported)
+  girl: "en-US-JennyNeural", // Cute Realistic Young Girl
+  boy: "en-US-GuyNeural"     // Natural Young Guy
 };
 
 // WhatsApp Android Playable OGG Opus converter
@@ -34,7 +31,7 @@ function convertToWhatsAppVoice(inputBuffer) {
 
     fs.writeFileSync(tempInput, inputBuffer);
 
-    // WhatsApp Mobile strictly requires libopus mono 48000Hz OGG container
+    // Strict WhatsApp Opus conversion (48kHz, mono, OGG container)
     const cmd = `"${ffmpegPath}" -y -i "${tempInput}" -c:a libopus -b:a 64k -ar 48000 -ac 1 -avoid_negative_ts make_zero "${tempOutput}"`;
 
     exec(cmd, (error) => {
@@ -53,22 +50,15 @@ function convertToWhatsAppVoice(inputBuffer) {
   });
 }
 
-// Fallback Free Voice Generator (Google / StreamElements)
-async function getFallbackVoice(text, isBoy) {
-  const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
-  let audioUrl = "";
-
-  if (hasSinhala) {
-    audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=si&q=${encodeURIComponent(text)}`;
-  } else {
-    const voiceName = isBoy ? "Brian" : "Salli";
-    audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=${voiceName}&text=${encodeURIComponent(text)}`;
-  }
-
+// Sinhala High-Pitch Natural Female Voice
+async function getSinhalaCuteVoice(text) {
+  const cleanText = encodeURIComponent(text);
+  // High-pitch Google Neural endpoint (Natural Female Pitch)
+  const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=si&q=${cleanText}&pitch=1.3`;
   const res = await axios.get(audioUrl, {
     responseType: "arraybuffer",
-    timeout: 25000,
-    headers: { "User-Agent": "Mozilla/5.0" }
+    timeout: 20000,
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
   });
   return Buffer.from(res.data);
 }
@@ -76,7 +66,7 @@ async function getFallbackVoice(text, isBoy) {
 module.exports = {
   name: "ttsgirl",
   alias: ["ttsboy", "tts", "speak", "voice"],
-  desc: "Convert text to Voice Note using FreeTTS.org API",
+  desc: "Convert text to realistic voice note using FreeTTS",
   category: "convert",
 
   async execute(sock, msg, args, chatJid, extra = {}) {
@@ -96,6 +86,7 @@ module.exports = {
       const fullBody = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || "").toLowerCase();
       const isBoy = fullBody.startsWith(".ttsboy") || extra?.body?.toLowerCase()?.startsWith(".ttsboy");
 
+      const voice = isBoy ? VOICES.boy : VOICES.girl;
       const emoji = isBoy ? "🎙️" : "💖";
       const doneEmoji = isBoy ? "🔥" : "💋";
 
@@ -104,14 +95,13 @@ module.exports = {
           chatJid,
           {
             text:
-              `🎙️ *FREETTS VOICE NOTE*\n\n` +
+              `🎙️ *AI VOICE NOTE*\n\n` +
               `හඬ බවට පත් කිරීමට text එකක් ලබාදෙන්න.\n\n` +
               `*Commands:*\n` +
-              `👩 *.ttsgirl* <text> - කෙල්ලෙක්ගෙ කටහඬින්\n` +
-              `👨 *.ttsboy* <text> - කොල්ලෙක්ගෙ කටහඬින්\n\n` +
-              `*උදාහරණ:*\n` +
-              `.ttsgirl කොහොමද සුදූ ඔයාට\n` +
-              `.ttsboy මචං මොකද වෙන්නේ`
+              `👩 *.ttsgirl* <text> - කෙල්ලෙක්ගෙ හඬින් (Jenny Neural)\n` +
+              `👨 *.ttsboy* <text> - කොල්ලෙක්ගෙ හඬින් (Guy Neural)\n\n` +
+              `*Tip:* Singlish හෝ English වලින් ලස්සනම Realistic හඬ ලැබෙයි!\n` +
+              `*උදා:* \`.ttsgirl kohomada sudu oya kawathey?\``
           },
           { quoted: msg }
         );
@@ -120,51 +110,59 @@ module.exports = {
       await sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } });
 
       const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
-      let selectedVoice = hasSinhala 
-        ? (isBoy ? VOICES.si_boy : VOICES.si_girl) 
-        : (isBoy ? VOICES.boy : VOICES.girl);
-
       let rawBuffer = null;
 
-      // 1. FreeTTS.org API එකෙන් Audio ලබා ගැනීම
-      try {
-        const ftResponse = await axios.post(
-          "https://freetts.org/api/v1/tts",
-          {
-            text: text,
-            voice: selectedVoice,
-            format: "mp3"
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${FREETTS_API_KEY}`,
-              "Content-Type": "application/json"
+      // 1. English හෝ Singlish නම් FreeTTS.org Official Neural API මඟින් ලබාගැනීම
+      if (!hasSinhala) {
+        try {
+          const ftRes = await axios.post(
+            "https://freetts.org/api/v1/tts",
+            {
+              text: text,
+              voice: voice,
+              output_format: "mp3"
             },
-            timeout: 20000
+            {
+              headers: {
+                "x-api-key": FREETTS_API_KEY, // FreeTTS official header
+                "Content-Type": "application/json"
+              },
+              timeout: 25000
+            }
+          );
+
+          // FreeTTS එකෙන් එන audio url එක download කරගැනීම
+          const audioUrl = ftRes.data?.audio_url || ftRes.data?.url || ftRes.data?.download_url;
+          if (audioUrl) {
+            const dl = await axios.get(audioUrl, { responseType: "arraybuffer", timeout: 20000 });
+            rawBuffer = Buffer.from(dl.data);
+          } else if (ftRes.data?.audio_base64) {
+            rawBuffer = Buffer.from(ftRes.data.audio_base64, "base64");
           }
-        );
-
-        const audioUrl = ftResponse.data?.audio_url || ftResponse.data?.url || ftResponse.data?.data?.url;
-
-        if (audioUrl) {
-          const dlRes = await axios.get(audioUrl, { responseType: "arraybuffer", timeout: 20000 });
-          rawBuffer = Buffer.from(dlRes.data);
-        } else if (Buffer.isBuffer(ftResponse.data)) {
-          rawBuffer = ftResponse.data;
+        } catch (ftErr) {
+          console.warn("[FreeTTS API Fail]:", ftErr.response?.data || ftErr.message);
         }
-      } catch (apiErr) {
-        console.warn(`FreeTTS API Error (${apiErr.message}). Switching to Fallback Engine...`);
       }
 
-      // 2. FreeTTS එකෙන් නොලැබුණහොත් Fallback Engine එකෙන් ලබා ගැනීම
+      // 2. FreeTTS වෙතින් නොලැබුණහොත් හෝ Sinhala අකුරු තිබේ නම්
       if (!rawBuffer || !rawBuffer.length) {
-        rawBuffer = await getFallbackVoice(text, isBoy);
+        if (hasSinhala) {
+          rawBuffer = await getSinhalaCuteVoice(text);
+        } else {
+          // High Quality English Voice Fallback (StreamElements Salli / Brian)
+          const fallbackVoice = isBoy ? "Brian" : "Salli";
+          const seRes = await axios.get(
+            `https://api.streamelements.com/kappa/v2/speech?voice=${fallbackVoice}&text=${encodeURIComponent(text)}`,
+            { responseType: "arraybuffer", timeout: 20000 }
+          );
+          rawBuffer = Buffer.from(seRes.data);
+        }
       }
 
-      // 3. WhatsApp Playable Voice Note (OGG Opus) එකක් බවට Convert කිරීම
+      // WhatsApp Playable Voice Note (OGG Opus) එකක් බවට convert කිරීම
       const voiceBuffer = await convertToWhatsAppVoice(rawBuffer);
 
-      // 4. Send as WhatsApp Voice Note (PTT)
+      // WhatsApp Voice Note (PTT) විදිහට යැවීම
       await sock.sendMessage(
         chatJid,
         {
