@@ -104,7 +104,7 @@ async function backupSession(sessionId, phoneNumber) {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    console.log(`💾 [MONGO BACKUP] +${phoneNumber} synced!`);
+    console.log(`💾 [MONGO BACKUP] +${phoneNumber} Synced!`);
   } catch (error) {
     console.error(`❌ [MONGO BACKUP ERROR] ${sessionId}:`, error.message);
   }
@@ -127,7 +127,7 @@ async function removeSession(sessionId, sessionDir) {
 }
 
 /* =========================================================
-   CREATE SOCKET (PARALLEL MULTI-BOT)
+   CREATE SOCKET (AUTHENTICATION FIX)
 ========================================================= */
 
 async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
@@ -135,6 +135,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
+  // Latest Official WhatsApp Web Version Handshake
   let version = [2, 3000, 1015901307];
   try {
     const vInfo = await fetchLatestBaileysVersion();
@@ -150,10 +151,11 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.ubuntu("Chrome"),
+    // Official WhatsApp Web Signature (Bypasses "Couldn't link device")
+    browser: ["Ubuntu", "Chrome", "20.0.04"],
     printQRInTerminal: false,
     syncFullHistory: false,
-    markOnlineOnConnect: false, // Fix: Pairing timeout වීම වළක්වයි
+    markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     keepAliveIntervalMs: 25000,
@@ -190,7 +192,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
       const { connection, lastDisconnect, isNewLogin } = update;
 
       if (isNewLogin) {
-        console.log(`🎉 [LINK ACCEPTED] +${phoneNumber} Successfully Linked!`);
+        console.log(`🎉 [LINK ACCEPTED] +${phoneNumber} Logged in! Finishing setup...`);
       }
 
       if (connection === "open") {
@@ -210,6 +212,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
 
         global.activeBotSockets.delete(sock);
 
+        // 1. Logged out
         if (statusCode === DisconnectReason.loggedOut) {
           console.log(`🚪 [LOGGED OUT] +${phoneNumber}`);
           global.allActiveSessions.delete(sessionId);
@@ -217,6 +220,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
           return;
         }
 
+        // 2. Bad session
         if (statusCode === DisconnectReason.badSession) {
           console.log(`🗑️ [BAD SESSION] Corrupted session for +${phoneNumber}`);
           global.allActiveSessions.delete(sessionId);
@@ -224,19 +228,20 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
           return;
         }
 
-        // Fix: 515 (restartRequired) එකෙන් පසු phone handshake timeout නොවී ක්ෂණිකව reconnect වීම
-        if (statusCode === DisconnectReason.restartRequired || isPairing) {
-          console.log(`⚡ [INSTANT RECONNECT] Finalizing link for +${phoneNumber}...`);
+        // 3. Post-Pairing 515 (restartRequired): Handshake එක safe විදිහට restart කිරීම
+        if (statusCode === DisconnectReason.restartRequired) {
+          console.log(`⚡ [HANDSHAKE RESTART] Finalizing credentials for +${phoneNumber}...`);
           setTimeout(async () => {
             try {
               await createMultiSocket(sessionId, phoneNumber, false);
             } catch (err) {
               console.error(`❌ Restart error +${phoneNumber}:`, err.message);
             }
-          }, 500);
+          }, 1500);
           return;
         }
 
+        // 4. Auto reconnect for network drops
         setTimeout(async () => {
           try {
             if (global.allActiveSessions.get(sessionId)?.user) return;
@@ -295,7 +300,7 @@ async function restoreCredentials() {
 
         console.log(`🔄 [RESTORING BOT]: +${phoneNumber}`);
         createMultiSocket(sessionId, phoneNumber, false).catch(() => {});
-        await delay(400);
+        await delay(500);
       } catch (err) {
         console.error("❌ Session restore item error:", err.message);
       }
@@ -309,7 +314,7 @@ async function restoreCredentials() {
 }
 
 /* =========================================================
-   REQUEST PAIRING CODE
+   REQUEST PAIRING CODE (CLEAN HANDSHAKE)
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
@@ -326,16 +331,18 @@ async function requestPairCode(phoneNumber) {
   const sessionId = `session_${cleanNumber}`;
   const sessionDir = getSessionFolder(sessionId);
 
+  // Close previous socket if already listening
   const oldSocket = global.allActiveSessions.get(sessionId);
   if (oldSocket) {
-    console.log(`♻️ [PAIRING] Resetting previous connection for +${cleanNumber}`);
+    console.log(`♻️ [PAIRING] Resetting existing connection for +${cleanNumber}`);
     try { oldSocket.ev.removeAllListeners("connection.update"); } catch {}
     try { oldSocket.end(undefined); } catch {}
     global.activeBotSockets.delete(oldSocket);
     global.allActiveSessions.delete(sessionId);
-    await delay(600);
+    await delay(1000);
   }
 
+  // Clear directory
   try {
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -349,7 +356,7 @@ async function requestPairCode(phoneNumber) {
     await SessionModel.deleteOne({ sessionId });
   } catch (e) {}
 
-  console.log(`📱 [PAIRING] Creating clean socket for +${cleanNumber}...`);
+  console.log(`📱 [PAIRING] Starting fresh socket for +${cleanNumber}...`);
   const sock = await createMultiSocket(sessionId, cleanNumber, true);
 
   return new Promise((resolve, reject) => {
@@ -366,9 +373,10 @@ async function requestPairCode(phoneNumber) {
       if (sock.authState?.creds?.registered) return;
 
       try {
-        await delay(2000); // Handshake complete වීමට අවශ්‍ය කාලය
+        // Wait 3 seconds for WhatsApp WebSocket state to stabilize
+        await delay(3000);
 
-        console.log(`🔐 [PAIRING] Generating official code for +${cleanNumber}...`);
+        console.log(`🔐 [PAIRING] Generating code for +${cleanNumber}...`);
         const rawCode = await sock.requestPairingCode(cleanNumber);
 
         if (!rawCode) throw new Error("WhatsApp did not return a pairing code.");
@@ -401,7 +409,7 @@ async function requestPairCode(phoneNumber) {
 
     setTimeout(async () => {
       if (!finished) await generateCode();
-    }, 3000);
+    }, 4000);
   });
 }
 
