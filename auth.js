@@ -6,7 +6,6 @@ const mongoose = require("mongoose");
 const {
   default: makeWASocket,
   useMultiFileAuthState,
-  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   Browsers,
   DisconnectReason,
@@ -127,32 +126,24 @@ async function removeSession(sessionId, sessionDir) {
 }
 
 /* =========================================================
-   CREATE SOCKET (AUTHENTICATION FIX)
+   CREATE SOCKET
 ========================================================= */
 
-async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
+async function createMultiSocket(sessionId, phoneNumber) {
   const sessionDir = getSessionFolder(sessionId);
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
-  // Latest Official WhatsApp Web Version Handshake
-  let version = [2, 3000, 1015901307];
-  try {
-    const vInfo = await fetchLatestBaileysVersion();
-    if (vInfo && vInfo.version) version = vInfo.version;
-  } catch (e) {}
-
   console.log(`🔧 [SOCKET] Initializing Baileys for +${phoneNumber}`);
 
   const sock = makeWASocket({
-    version,
     logger,
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Official WhatsApp Web Signature (Bypasses "Couldn't link device")
-    browser: ["Ubuntu", "Chrome", "20.0.04"],
+    // Official WhatsApp Web Standard Signature
+    browser: Browsers.macOS("Chrome"),
     printQRInTerminal: false,
     syncFullHistory: false,
     markOnlineOnConnect: false,
@@ -192,7 +183,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
       const { connection, lastDisconnect, isNewLogin } = update;
 
       if (isNewLogin) {
-        console.log(`🎉 [LINK ACCEPTED] +${phoneNumber} Logged in! Finishing setup...`);
+        console.log(`🎉 [LINK ACCEPTED] +${phoneNumber} Logged in!`);
       }
 
       if (connection === "open") {
@@ -212,7 +203,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
 
         global.activeBotSockets.delete(sock);
 
-        // 1. Logged out
+        // Logged out
         if (statusCode === DisconnectReason.loggedOut) {
           console.log(`🚪 [LOGGED OUT] +${phoneNumber}`);
           global.allActiveSessions.delete(sessionId);
@@ -220,33 +211,33 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
           return;
         }
 
-        // 2. Bad session
+        // Bad session
         if (statusCode === DisconnectReason.badSession) {
-          console.log(`🗑️ [BAD SESSION] Corrupted session for +${phoneNumber}`);
+          console.log(`🗑️️ [BAD SESSION] Corrupted session for +${phoneNumber}`);
           global.allActiveSessions.delete(sessionId);
           await removeSession(sessionId, sessionDir);
           return;
         }
 
-        // 3. Post-Pairing 515 (restartRequired): Handshake එක safe විදිහට restart කිරීම
+        // Restart required (515) - Post pairing flow
         if (statusCode === DisconnectReason.restartRequired) {
-          console.log(`⚡ [HANDSHAKE RESTART] Finalizing credentials for +${phoneNumber}...`);
+          console.log(`⚡ [POST-PAIR RECONNECT] Initializing saved session for +${phoneNumber}...`);
           setTimeout(async () => {
             try {
-              await createMultiSocket(sessionId, phoneNumber, false);
+              await createMultiSocket(sessionId, phoneNumber);
             } catch (err) {
               console.error(`❌ Restart error +${phoneNumber}:`, err.message);
             }
-          }, 1500);
+          }, 1000);
           return;
         }
 
-        // 4. Auto reconnect for network drops
+        // Auto reconnect on internet drop
         setTimeout(async () => {
           try {
             if (global.allActiveSessions.get(sessionId)?.user) return;
-            console.log(`🔄 [AUTO RECONNECT] Reconnecting +${phoneNumber}...`);
-            await createMultiSocket(sessionId, phoneNumber, false);
+            console.log(`🔄 [AUTO RECONNECT] Restoring +${phoneNumber}...`);
+            await createMultiSocket(sessionId, phoneNumber);
           } catch (error) {
             console.error(`❌ [RECONNECT ERROR] +${phoneNumber}:`, error.message);
           }
@@ -267,7 +258,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
 }
 
 /* =========================================================
-   RESTORE ALL MONGO SESSIONS
+   RESTORE ALL MONGO SESSIONS AT STARTUP
 ========================================================= */
 
 async function restoreCredentials() {
@@ -277,7 +268,7 @@ async function restoreCredentials() {
     const sessions = await SessionModel.find({}).lean();
 
     if (!sessions || sessions.length === 0) {
-      console.log("ℹ️ [SESSIONS] No saved sessions in MongoDB.");
+      console.log("ℹ️️ [SESSIONS] No saved sessions in MongoDB.");
       return false;
     }
 
@@ -298,8 +289,8 @@ async function restoreCredentials() {
           fs.writeFileSync(filePath, content, "utf8");
         }
 
-        console.log(`🔄 [RESTORING BOT]: +${phoneNumber}`);
-        createMultiSocket(sessionId, phoneNumber, false).catch(() => {});
+        console.log(`🔄 [STARTING SESSION]: +${phoneNumber}`);
+        createMultiSocket(sessionId, phoneNumber).catch(() => {});
         await delay(500);
       } catch (err) {
         console.error("❌ Session restore item error:", err.message);
@@ -314,7 +305,7 @@ async function restoreCredentials() {
 }
 
 /* =========================================================
-   REQUEST PAIRING CODE (CLEAN HANDSHAKE)
+   REQUEST PAIRING CODE (OFFICIAL BAILEYS QR TRIGGER)
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
@@ -331,7 +322,7 @@ async function requestPairCode(phoneNumber) {
   const sessionId = `session_${cleanNumber}`;
   const sessionDir = getSessionFolder(sessionId);
 
-  // Close previous socket if already listening
+  // Close previous socket if already present
   const oldSocket = global.allActiveSessions.get(sessionId);
   if (oldSocket) {
     console.log(`♻️ [PAIRING] Resetting existing connection for +${cleanNumber}`);
@@ -342,7 +333,7 @@ async function requestPairCode(phoneNumber) {
     await delay(1000);
   }
 
-  // Clear directory
+  // Clear broken session cache
   try {
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -356,8 +347,8 @@ async function requestPairCode(phoneNumber) {
     await SessionModel.deleteOne({ sessionId });
   } catch (e) {}
 
-  console.log(`📱 [PAIRING] Starting fresh socket for +${cleanNumber}...`);
-  const sock = await createMultiSocket(sessionId, cleanNumber, true);
+  console.log(`📱 [PAIRING] Launching fresh Baileys client for +${cleanNumber}...`);
+  const sock = await createMultiSocket(sessionId, cleanNumber);
 
   return new Promise((resolve, reject) => {
     let finished = false;
@@ -365,56 +356,42 @@ async function requestPairCode(phoneNumber) {
     const timeout = setTimeout(() => {
       if (finished) return;
       finished = true;
-      reject(new Error("Pairing code timeout. Please refresh and request a new code."));
+      reject(new Error("Pairing code timeout. Please refresh and try again."));
     }, 45000);
 
-    const generateCode = async () => {
-      if (finished) return;
-      if (sock.authState?.creds?.registered) return;
-
-      try {
-        // Wait 3 seconds for WhatsApp WebSocket state to stabilize
-        await delay(3000);
-
-        console.log(`🔐 [PAIRING] Generating code for +${cleanNumber}...`);
-        const rawCode = await sock.requestPairingCode(cleanNumber);
-
-        if (!rawCode) throw new Error("WhatsApp did not return a pairing code.");
-
-        const code = String(rawCode);
-        const formattedCode =
-          code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-
-        console.log(`✅ [PAIRING CODE READY] +${cleanNumber}: ${formattedCode}`);
-
+    const onUpdate = async ({ connection, qr }) => {
+      // Baileys official rule: The qr event is the real trigger that socket is ready to pair!
+      if (qr && !sock.authState?.creds?.registered && !finished) {
         finished = true;
         clearTimeout(timeout);
-        resolve({ code: formattedCode, socket: sock });
-      } catch (err) {
-        if (!finished) {
-          finished = true;
-          clearTimeout(timeout);
-          console.error(`❌ [PAIRING ERROR] +${cleanNumber}:`, err.message);
+        sock.ev.off("connection.update", onUpdate);
+
+        try {
+          console.log(`🔐 [PAIRING] WhatsApp Handshake confirmed. Requesting pairing code for +${cleanNumber}...`);
+          const rawCode = await sock.requestPairingCode(cleanNumber);
+
+          if (!rawCode) throw new Error("WhatsApp did not return a pairing code.");
+
+          const code = String(rawCode);
+          const formattedCode =
+            code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+
+          console.log(`✅ [PAIRING CODE READY] +${cleanNumber}: ${formattedCode}`);
+
+          resolve({ code: formattedCode, socket: sock });
+        } catch (err) {
+          console.error(`❌ [CODE ERROR] +${cleanNumber}:`, err.message);
           reject(err);
         }
       }
     };
 
-    sock.ev.on("connection.update", async (update) => {
-      const { connection, qr } = update;
-      if (connection === "connecting" || qr) {
-        await generateCode();
-      }
-    });
-
-    setTimeout(async () => {
-      if (!finished) await generateCode();
-    }, 4000);
+    sock.ev.on("connection.update", onUpdate);
   });
 }
 
 /* =========================================================
-   BACKWARD COMPATIBILITY & EXPORTS
+   EXPORTS
 ========================================================= */
 
 async function startSavedSocket() {
