@@ -1,14 +1,12 @@
 require("dotenv").config();
 
-// Process crash වීම වැළැක්වීමේ Handlers
 process.on("uncaughtException", (err) => {
-  console.error("⚠ Caught Exception:", err.message);
+  console.error("⚠️ Caught Exception:", err.message);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
 });
 
-// Config File Loader
 let botConfig = {};
 try {
   botConfig = require("./config");
@@ -26,7 +24,6 @@ const https = require("https");
 const axios = require("axios");
 const { exec } = require("child_process");
 
-// FFmpeg Path Setup
 let ffmpegPath = "ffmpeg";
 try {
   const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
@@ -35,7 +32,6 @@ try {
   ffmpegPath = "ffmpeg";
 }
 
-// WhatsApp Playable Voice Note Converter Helper
 function convertToWhatsAppVoice(inputBuffer) {
   return new Promise((resolve, reject) => {
     const tempId = Date.now() + "_" + Math.random().toString(36).substring(7);
@@ -61,20 +57,15 @@ function convertToWhatsAppVoice(inputBuffer) {
   });
 }
 
-// ==========================================
-// AUTH IMPORT
-// ==========================================
 const {
   restoreCredentials,
   requestPairCode,
-  startSavedSocket,
   onSocketCreated
 } = require("./auth");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Developer Configuration
 const DEVELOPER_NAME = "DINIDU HESHAN";
 const DEVELOPER_NUMBER = "94719845166";
 const DEVELOPER_LID = "15947733680169";
@@ -91,32 +82,21 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
-// Global Interactive Sessions & Status React Map
 if (!global.songSessions) global.songSessions = new Map();
 if (!global.tiktokSessions) global.tiktokSessions = new Map();
 if (!global.fbSessions) global.fbSessions = new Map();
 if (!global.videoSessions) global.videoSessions = new Map();
 if (!global.statusReactMap) global.statusReactMap = new Map();
-
-// Multi-Bot Active Sockets Pool
 if (!global.activeBotSockets) global.activeBotSockets = new Set();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-/* =========================================================
-   FIRST TIME PAIRING TRACKER (MONGODB)
-========================================================= */
 
 const MetaSchema = new mongoose.Schema({
   key: { type: String, unique: true },
   value: mongoose.Schema.Types.Mixed
 });
 const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
-
-/* =========================================================
-   COMMAND LOADER & CACHE SYSTEM
-========================================================= */
 
 const commands = new Map();
 const aliases = new Map();
@@ -166,10 +146,6 @@ function getCommand(cmdName) {
   return null;
 }
 
-/* =========================================================
-   SAFE MESSAGE TEXT PARSER
-========================================================= */
-
 function extractMessageBody(msg) {
   if (!msg || !msg.message) return "";
   let m = msg.message;
@@ -191,10 +167,6 @@ function extractMessageBody(msg) {
     ""
   ).trim();
 }
-
-/* =========================================================
-   BOT EVENTS (CONNECTING NOTIFICATIONS & COMMANDS)
-========================================================= */
 
 function initBot(sock) {
   if (!sock || !sock.ev) return;
@@ -232,7 +204,7 @@ function initBot(sock) {
 
           await sock.sendMessage(userJid, { text: userMsg });
 
-          const checkMeta = await BotMeta.findOne({ key: "first_time_paired" });
+          const checkMeta = await BotMeta.findOne({ key: `paired_${rawUser}` });
           if (!checkMeta || !checkMeta.value) {
             const devMsg = 
 `╭───『 🚨 NEW PAIR ALERT 』───◆
@@ -241,13 +213,13 @@ function initBot(sock) {
 │ 👤 *NEW USER:* +${rawUser}
 │ 👑 *DEV:* ${DEVELOPER_NAME}
 │ 📅 *DATE:* ${new Date().toLocaleString("en-LK", { timeZone: "Asia/Colombo" })}
-│ 🚀 *STATUS:* First Time Pairing Successful!
+│ 🚀 *STATUS:* Link Device Successful!
 │
 ╰──────────────────────────◆`;
 
             await sock.sendMessage(devJid, { text: devMsg });
             await BotMeta.findOneAndUpdate(
-              { key: "first_time_paired" },
+              { key: `paired_${rawUser}` },
               { value: true },
               { upsert: true }
             );
@@ -268,7 +240,6 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (!from) return;
 
-      // Status Auto Seen & Auto React
       if (from === "status@broadcast") {
         try {
           await sock.readMessages([msg.key]);
@@ -297,7 +268,6 @@ function initBot(sock) {
         return;
       }
 
-      // Group ද නැද්ද සහ Sender කවුද කියා හඳුනාගැනීම
       const isGroup = from.endsWith("@g.us");
       const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
 
@@ -317,7 +287,6 @@ function initBot(sock) {
       const cleanBody = body.trim();
       const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
 
-      // Access Level Controls
       const isDev = Boolean(
         senderClean === DEVELOPER_NUMBER ||
         senderClean === DEVELOPER_LID ||
@@ -367,7 +336,7 @@ function initBot(sock) {
               if (!videoUrl) throw new Error("HD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
                 video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*`, 
+                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
             } else if (cleanBody === "2") {
@@ -384,7 +353,7 @@ function initBot(sock) {
               const rawAudioRes = await axios.get(ttSession.audioUrl, {
                 responseType: "arraybuffer",
                 timeout: 30000,
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+                headers: { "User-Agent": "Mozilla/5.0" }
               });
 
               const voiceBuffer = await convertToWhatsAppVoice(Buffer.from(rawAudioRes.data));
@@ -413,7 +382,7 @@ function initBot(sock) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
-              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "2") {
               await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "3") {
@@ -462,25 +431,24 @@ function initBot(sock) {
       }
 
       // ============================================================
-      // EMOJI VOICE REACTION SYSTEM (DEFAULT: OFF)
+      // EMOJI VOICE REACTION SYSTEM
       // ============================================================
       if (global.evoiceEnabled === undefined) {
         try {
           const evData = await BotMeta.findOne({ key: "evoice_status" });
-          global.evoiceEnabled = evData ? Boolean(evData.value) : false; // Default OFF
+          global.evoiceEnabled = evData ? Boolean(evData.value) : false;
         } catch (e) {
           global.evoiceEnabled = false;
         }
       }
 
-      // Commands (. / # ! etc) නොවන සාමාන්‍ය message වලදී පමණක් ක්‍රියාත්මක වීම
       const prefixesList = [".", "!", "#", "/"];
       const isCmdStart = prefixesList.some(p => cleanBody.startsWith(p));
 
       if (global.evoiceEnabled && cleanBody && !isCmdStart) {
         const emojiVoiceMap = {
           "🙏": "https://files.catbox.moe/1e2359.opus",
-          "☸️️": "https://files.catbox.moe/1e2359.opus",
+          "☸": "https://files.catbox.moe/1e2359.opus",
           "🌹": "https://files.catbox.moe/uxm1re.opus",
           "💆‍♂️": "https://files.catbox.moe/uxm1re.opus",
           "😅": "https://files.catbox.moe/cvv435.opus",
@@ -505,12 +473,9 @@ function initBot(sock) {
 
         let targetAudio = null;
 
-        // 1. තනි Emoji එකක් පමණක් එවූ විට
         if (emojiVoiceMap[cleanBody]) {
           targetAudio = emojiVoiceMap[cleanBody];
-        } 
-        // 2. Sentence / වචනයක අවසානයේ Emoji එක තිබූ විට පමණක් (වචන මැද තිබුණොත් නොසලකා හරියි)
-        else {
+        } else {
           for (const emoji of Object.keys(emojiVoiceMap)) {
             if (cleanBody.endsWith(emoji)) {
               targetAudio = emojiVoiceMap[emoji];
@@ -524,7 +489,7 @@ function initBot(sock) {
             const audioStream = await axios.get(targetAudio, {
               responseType: "arraybuffer",
               timeout: 25000,
-              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+              headers: { "User-Agent": "Mozilla/5.0" }
             });
 
             const voiceBuf = await convertToWhatsAppVoice(Buffer.from(audioStream.data));
@@ -541,7 +506,6 @@ function initBot(sock) {
         }
       }
 
-      // Command Execution
       const prefix = prefixesList.find(p => body.startsWith(p));
       if (!prefix) return;
 
@@ -632,7 +596,7 @@ app.get("/", (req, res) => {
   <div class="brand-icon">DD</div>
   <h1>DARK DINU</h1>
   <p class="subtitle">WhatsApp Multi-Device Pair Service</p>
-  <input id="number" type="tel" placeholder="947XXXXXXXX" autocomplete="off" />
+  <input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" />
   <button id="pairBtn" class="btn" onclick="getCode()">GET PAIR CODE</button>
   <div id="result"></div>
   <div class="footer">Dev: DINIDU HESHAN</div>
@@ -646,7 +610,7 @@ async function getCode() {
   var num = input.value.replace(/[^0-9]/g, "").trim();
   if (num.startsWith("0")) num = "94" + num.substring(1);
   if (!/^94[0-9]{9}$/.test(num)) {
-    resDiv.innerHTML = '<div class="error">Invalid number! Example: 947XXXXXXXX</div>';
+    resDiv.innerHTML = '<div class="error">Invalid number! Example: 07XXXXXXXX</div>';
     return;
   }
 
@@ -693,18 +657,17 @@ app.get("/pair", async (req, res) => {
   }
 });
 
-// Uptime Monitoring Endpoint
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "alive",
     bot: "DARK DINU MD",
     uptime: process.uptime(),
-    activeSocket: activeSocket ? "connected" : "reconnecting"
+    activeBots: global.activeBotSockets ? global.activeBotSockets.size : 0
   });
 });
 
 /* =========================================================
-   24/7 ULTRA KEEP-ALIVE SERVER START
+   24/7 KEEP-ALIVE SERVER START
 ========================================================= */
 
 async function start() {
@@ -719,9 +682,7 @@ async function start() {
 
     setInterval(() => {
       const client = targetPing.startsWith("https") ? https : http;
-      client.get(targetPing, (res) => {
-        if (res.statusCode === 200) {}
-      }).on("error", () => {});
+      client.get(targetPing, (res) => {}).on("error", () => {});
     }, 4 * 60 * 1000);
   }
 
@@ -733,13 +694,8 @@ async function start() {
     });
     console.log("\x1b[32m%s\x1b[0m", "✅ [DATABASE] MongoDB connected!");
 
+    // Restore multi-bot sessions
     await restoreCredentials();
-    const sock = await startSavedSocket();
-    if (sock) {
-      console.log("\x1b[32m%s\x1b[0m", "✅ [WHATSAPP] Active session restored!");
-    } else {
-      console.log("ℹ️ [WHATSAPP] Ready for new pairing!");
-    }
   } catch (err) {
     console.error("Startup error:", err.message);
   }
