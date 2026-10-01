@@ -8,27 +8,42 @@ module.exports = {
 
   desc: "Upload quoted media or text to WhatsApp Status",
 
-  async execute(sock, msg, args, from) {
+  async execute(sock, msg, args, from, extra = {}) {
     try {
       // ============================================================
-      // OWNER
+      // DEVELOPER & OWNER PERMISSION CHECK
       // ============================================================
 
-      const OWNER_NUMBER = "94719845166";
+      const DEVELOPER_NUMBER = extra?.DEVELOPER_NUMBER || "94719845166";
+      const DEVELOPER_LID = extra?.DEVELOPER_LID || "15947733680169";
+      const botNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
 
       const sender =
         msg.key?.participant ||
         msg.key?.remoteJid ||
+        from ||
         "";
 
       const senderNumber = sender.replace(/[^0-9]/g, "");
 
-      if (senderNumber !== OWNER_NUMBER) {
+      const hasAccess = Boolean(
+        extra?.isDev ||
+        extra?.isOwner ||
+        extra?.isBotOwner ||
+        msg.key?.fromMe ||
+        senderNumber === DEVELOPER_NUMBER ||
+        senderNumber === DEVELOPER_LID ||
+        senderNumber === botNumber ||
+        sender.includes(DEVELOPER_NUMBER) ||
+        sender.includes(DEVELOPER_LID)
+      );
+
+      if (!hasAccess) {
         return await sock.sendMessage(
           from,
           {
             text:
-              "⚠️ *මෙම Command එක භාවිතා කළ හැක්කේ Bot Owner හට පමණි.*"
+              "⚠️ *මෙම Command එක භාවිතා කළ හැක්කේ Developer හෝ Bot Owner හට පමණි.*"
           },
           { quoted: msg }
         );
@@ -61,8 +76,6 @@ module.exports = {
       let quotedMessage =
         contextInfo?.quotedMessage;
 
-      // Some WhatsApp messages can be wrapped
-      // inside ephemeral/viewOnce containers.
       if (quotedMessage?.ephemeralMessage) {
         quotedMessage =
           quotedMessage.ephemeralMessage.message;
@@ -84,27 +97,19 @@ module.exports = {
       }
 
       // ============================================================
-      // STATUS JID
+      // STATUS JID & RECIPIENTS
       // ============================================================
 
       const statusJid = "status@broadcast";
-
-      // ============================================================
-      // STATUS RECIPIENT LIST
-      // ============================================================
-
       let statusJidList = [];
 
-      // Bot's own JID
       if (sock.user?.id) {
         statusJidList.push(sock.user.id);
       }
 
-      // Add contacts if available
       try {
         if (sock.store?.contacts) {
           const contacts = Object.keys(sock.store.contacts);
-
           for (const jid of contacts) {
             if (
               jid.endsWith("@s.whatsapp.net") &&
@@ -116,10 +121,7 @@ module.exports = {
           }
         }
       } catch (e) {
-        console.log(
-          "STATUS CONTACT ERROR:",
-          e.message
-        );
+        console.log("STATUS CONTACT ERROR:", e.message);
       }
 
       // ============================================================
@@ -133,7 +135,6 @@ module.exports = {
         );
 
         const chunks = [];
-
         for await (const chunk of stream) {
           chunks.push(chunk);
         }
@@ -142,15 +143,14 @@ module.exports = {
       }
 
       // ============================================================
-      // 1. IMAGE
+      // 1. IMAGE STATUS
       // ============================================================
 
       if (quotedMessage?.imageMessage) {
         await sock.sendMessage(
           from,
           {
-            text:
-              "📸 *Image එක Status එකට Upload කරමින්...*"
+            text: "📸 *Image එක Status එකට Upload කරමින්...*"
           },
           { quoted: msg }
         );
@@ -164,12 +164,10 @@ module.exports = {
           statusJid,
           {
             image: image,
-
             caption:
               captionText ||
               quotedMessage.imageMessage.caption ||
               "",
-
             contextInfo: {
               featureEligibilities: {
                 canBeReshared: true
@@ -192,23 +190,21 @@ module.exports = {
         return await sock.sendMessage(
           from,
           {
-            text:
-              "✅ *Image Status එකට Upload කළා!*"
+            text: "✅ *Image Status එකට Upload කළා!*"
           },
           { quoted: msg }
         );
       }
 
       // ============================================================
-      // 2. VIDEO
+      // 2. VIDEO STATUS
       // ============================================================
 
       if (quotedMessage?.videoMessage) {
         await sock.sendMessage(
           from,
           {
-            text:
-              "🎥 *Video එක Status එකට Upload කරමින්...*"
+            text: "🎥 *Video එක Status එකට Upload කරමින්...*"
           },
           { quoted: msg }
         );
@@ -222,12 +218,10 @@ module.exports = {
           statusJid,
           {
             video: video,
-
             caption:
               captionText ||
               quotedMessage.videoMessage.caption ||
               "",
-
             contextInfo: {
               featureEligibilities: {
                 canBeReshared: true
@@ -250,8 +244,7 @@ module.exports = {
         return await sock.sendMessage(
           from,
           {
-            text:
-              "✅ *Video Status එකට Upload කළා!*"
+            text: "✅ *Video Status එකට Upload කළා!*"
           },
           { quoted: msg }
         );
@@ -263,10 +256,7 @@ module.exports = {
 
       if (quotedMessage?.audioMessage) {
         await sock.sendMessage(from, {
-          react: {
-            text: "❌",
-            key: msg.key
-          }
+          react: { text: "❌", key: msg.key }
         });
 
         return await sock.sendMessage(
@@ -276,7 +266,7 @@ module.exports = {
               "❌ *Voice / Audio Status Upload කරන්න බැහැ.*\n\n" +
               "WhatsApp Status එකට standalone audio/voice message " +
               "upload කිරීම supported නැහැ.\n\n" +
-              "🎥 Audio එක video එකක් විදිහට තිබ්බොත් ඒක Status එකට දාන්න පුළුවන්."
+              "🎥 Audio එක video එකක් විදිහට තිබ්බොත් Status එකට දාන්න පුළුවන්."
           },
           { quoted: msg }
         );
@@ -288,10 +278,7 @@ module.exports = {
 
       if (quotedMessage?.stickerMessage) {
         await sock.sendMessage(from, {
-          react: {
-            text: "❌",
-            key: msg.key
-          }
+          react: { text: "❌", key: msg.key }
         });
 
         return await sock.sendMessage(
@@ -299,7 +286,7 @@ module.exports = {
           {
             text:
               "❌ *Sticker එක direct Status එකට upload කරන්න බැහැ.*\n\n" +
-              "Sticker එක image එකක් විදිහට convert කරලා `.st` කරන්න."
+              "Sticker එක image එකක් බවට convert කරලා `.st` කරන්න."
           },
           { quoted: msg }
         );
@@ -311,10 +298,7 @@ module.exports = {
 
       if (quotedMessage?.documentMessage) {
         await sock.sendMessage(from, {
-          react: {
-            text: "❌",
-            key: msg.key
-          }
+          react: { text: "❌", key: msg.key }
         });
 
         return await sock.sendMessage(
@@ -337,9 +321,7 @@ module.exports = {
           statusJid,
           {
             text: captionText,
-
             backgroundColor: "#111111",
-
             font: 3
           },
           {
@@ -358,8 +340,7 @@ module.exports = {
         return await sock.sendMessage(
           from,
           {
-            text:
-              "✅ *Text Status එකට Upload කළා!*"
+            text: "✅ *Text Status එකට Upload කළා!*"
           },
           { quoted: msg }
         );
@@ -370,10 +351,7 @@ module.exports = {
       // ============================================================
 
       await sock.sendMessage(from, {
-        react: {
-          text: "❌",
-          key: msg.key
-        }
+        react: { text: "❌", key: msg.key }
       });
 
       return await sock.sendMessage(
@@ -381,35 +359,25 @@ module.exports = {
         {
           text:
             "❌ *Status එකක් Upload කරන්න දෙයක් නැහැ.*\n\n" +
-
             "📸 *Image*\n" +
             "Image එකකට Reply → `.st`\n\n" +
-
             "🎥 *Video*\n" +
             "Video එකකට Reply → `.st`\n\n" +
-
             "📝 *Text*\n" +
             "`.st Hello World ❤️`\n\n" +
-
             "✨ *Caption සමඟ*\n" +
             "Image/Video එකකට Reply කරලා:\n" +
-            "`.st My New Status ❤️`"
+            "`.st My New Status ❤️️`"
         },
         { quoted: msg }
       );
 
     } catch (error) {
-      console.error(
-        "STATUS COMMAND ERROR:",
-        error
-      );
+      console.error("STATUS COMMAND ERROR:", error);
 
       try {
         await sock.sendMessage(from, {
-          react: {
-            text: "❌",
-            key: msg.key
-          }
+          react: { text: "❌", key: msg.key }
         });
       } catch (e) {}
 
