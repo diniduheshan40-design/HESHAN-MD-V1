@@ -2,7 +2,7 @@ require("dotenv").config();
 
 // Process crash වීම වැළැක්වීමේ Handlers
 process.on("uncaughtException", (err) => {
-  console.error("⚠️️ Caught Exception:", err.message);
+  console.error("⚠ Caught Exception:", err.message);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
@@ -97,6 +97,9 @@ if (!global.tiktokSessions) global.tiktokSessions = new Map();
 if (!global.fbSessions) global.fbSessions = new Map();
 if (!global.videoSessions) global.videoSessions = new Map();
 if (!global.statusReactMap) global.statusReactMap = new Map();
+
+// Multi-Bot Active Sockets Pool
+if (!global.activeBotSockets) global.activeBotSockets = new Set();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -196,6 +199,9 @@ function extractMessageBody(msg) {
 function initBot(sock) {
   if (!sock || !sock.ev) return;
   activeSocket = sock;
+  if (global.activeBotSockets) {
+    global.activeBotSockets.add(sock);
+  }
 
   sock.ev.on("connection.update", async (update) => {
     const { connection } = update;
@@ -361,7 +367,7 @@ function initBot(sock) {
               if (!videoUrl) throw new Error("HD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
                 video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
+                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
             } else if (cleanBody === "2") {
@@ -474,7 +480,7 @@ function initBot(sock) {
       if (global.evoiceEnabled && cleanBody && !isCmdStart) {
         const emojiVoiceMap = {
           "🙏": "https://files.catbox.moe/1e2359.opus",
-          "☸️": "https://files.catbox.moe/1e2359.opus",
+          "☸️️": "https://files.catbox.moe/1e2359.opus",
           "🌹": "https://files.catbox.moe/uxm1re.opus",
           "💆‍♂️": "https://files.catbox.moe/uxm1re.opus",
           "😅": "https://files.catbox.moe/cvv435.opus",
@@ -585,6 +591,9 @@ function initBot(sock) {
 }
 
 onSocketCreated((sock) => {
+  if (sock && global.activeBotSockets) {
+    global.activeBotSockets.add(sock);
+  }
   initBot(sock);
 });
 
