@@ -32,23 +32,11 @@ let onSocketCreatedCallback = null;
 
 const SessionSchema = new mongoose.Schema(
   {
-    sessionId: {
-      type: String,
-      unique: true,
-      required: true
-    },
-    phoneNumber: {
-      type: String,
-      required: true
-    },
-    files: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {}
-    }
+    sessionId: { type: String, unique: true, required: true },
+    phoneNumber: { type: String, required: true },
+    files: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
 const SessionModel =
@@ -98,16 +86,8 @@ async function backupSession(sessionId, phoneNumber) {
 
     await SessionModel.findOneAndUpdate(
       { sessionId },
-      {
-        $set: {
-          files,
-          phoneNumber
-        }
-      },
-      {
-        upsert: true,
-        new: true
-      }
+      { $set: { files, phoneNumber } },
+      { upsert: true, new: true }
     );
 
     console.log(`💾 [MONGO BACKUP] ${phoneNumber}`);
@@ -117,16 +97,16 @@ async function backupSession(sessionId, phoneNumber) {
 }
 
 /* =========================================================
-   CREATE SOCKET (PARALLEL MULTI-BOT)
+   CREATE SOCKET (MULTI-DEVICE PARALLEL)
 ========================================================= */
 
 async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
   const sessionDir = getSessionFolder(sessionId);
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-  const { version } = await fetchLatestBaileysVersion();
+  const { version, isLatest } = await fetchLatestBaileysVersion();
 
-  console.log(`🔧 [SOCKET] Initializing socket for ${phoneNumber}`);
+  console.log(`🔧 [SOCKET] Initializing Baileys v${version.join(".")} (Latest: ${isLatest}) for ${phoneNumber}`);
 
   const sock = makeWASocket({
     version,
@@ -135,21 +115,24 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.ubuntu("Chrome"),
+    // WA Business සහ Standard WhatsApp වලට 100% Accept වන Mac/Desktop Web signature එක
+    browser: Browsers.macOS("Desktop"),
     printQRInTerminal: false,
     syncFullHistory: false,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000,
+    keepAliveIntervalMs: 25000,
     emitOwnEvents: true,
-    generateHighQualityLinkPreview: false
+    generateHighQualityLinkPreview: false,
+    retryRequestDelayMs: 500,
+    maxMsgRetryCount: 5
   });
 
   sock.sessionId = sessionId;
   sock.phoneNumber = phoneNumber;
 
-  // Creds Update Listener
+  // Creds save
   sock.ev.on("creds.update", async () => {
     try {
       await saveCreds();
@@ -159,18 +142,18 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
     }
   });
 
-  // Connection Update Listener
+  // Connection update
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, isNewLogin } = update;
 
     if (isNewLogin) {
-      console.log(`🎉 [PAIRING SUCCESS] ${phoneNumber} Link Accepted!`);
+      console.log(`🎉 [LINK ACCEPTED] ${phoneNumber} Successfully Linked!`);
     }
 
     if (connection === "open") {
       console.log(
         "\x1b[32m%s\x1b[0m",
-        `🟢 [CONNECTED] ${phoneNumber} → DARK DINU ONLINE`
+        `🟢 [CONNECTED] ${phoneNumber} → DARK DINU ONLINE & ACTIVE`
       );
 
       global.activeBotSockets.add(sock);
@@ -187,7 +170,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
         global.allActiveSessions.delete(sessionId);
       }
 
-      // Logged out
+      // User actively logged out
       if (statusCode === DisconnectReason.loggedOut) {
         console.log(`🚪 [LOGGED OUT] ${phoneNumber}`);
         await SessionModel.deleteOne({ sessionId }).catch(() => {});
@@ -197,17 +180,29 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
         return;
       }
 
-      // 515 restartRequired හෝ සාමාන්‍ය connection drop එකකදී Auto Reconnect වීම
-      const delayMs = statusCode === DisconnectReason.restartRequired ? 1500 : 5000;
+      // Status 515 (restartRequired) - Pairing code එකෙන් login වූ පසු WhatsApp දෙන auto restart එක
+      if (statusCode === DisconnectReason.restartRequired || isPairing) {
+        console.log(`🔄 [PAIRING RESTART] Handling post-pair restart for ${phoneNumber}...`);
+        setTimeout(async () => {
+          try {
+            await createMultiSocket(sessionId, phoneNumber, false);
+          } catch (e) {
+            console.error("Post-pair reconnect error:", e.message);
+          }
+        }, 1500);
+        return;
+      }
+
+      // General auto reconnect
       setTimeout(async () => {
         try {
           if (global.allActiveSessions.has(sessionId)) return;
-          console.log(`🔄 [RECONNECTING] ${phoneNumber}...`);
+          console.log(`🔄 [AUTO RECONNECT] Restoring ${phoneNumber}...`);
           await createMultiSocket(sessionId, phoneNumber, false);
         } catch (err) {
           console.error(`❌ Reconnect error ${phoneNumber}:`, err.message);
         }
-      }, delayMs);
+      }, 5000);
     }
   });
 
@@ -221,7 +216,7 @@ async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
 }
 
 /* =========================================================
-   RESTORE ALL MONGO SESSIONS
+   RESTORE ALL MONGO SESSIONS AT SERVER START
 ========================================================= */
 
 async function restoreCredentials() {
@@ -235,7 +230,7 @@ async function restoreCredentials() {
       return false;
     }
 
-    console.log(`⚡ [SESSIONS] Restoring ${sessions.length} session(s)...`);
+    console.log(`⚡ [SESSIONS] Restoring ${sessions.length} session(s) in parallel...`);
 
     for (const session of sessions) {
       try {
@@ -248,12 +243,12 @@ async function restoreCredentials() {
           fs.writeFileSync(filePath, content, "utf8");
         }
 
-        console.log(`🔄 [RESTORE] Starting bot: ${phoneNumber}`);
+        console.log(`🔄 [STARTING SESSION]: +${phoneNumber}`);
         createMultiSocket(sessionId, phoneNumber, false).catch((err) => {
-          console.error(`❌ Restore socket error ${phoneNumber}:`, err.message);
+          console.error(`❌ Socket error ${phoneNumber}:`, err.message);
         });
 
-        await delay(500);
+        await delay(400); // Parallel startup rate-limiting
       } catch (error) {
         console.error("❌ Session restore item error:", error.message);
       }
@@ -267,7 +262,7 @@ async function restoreCredentials() {
 }
 
 /* =========================================================
-   REQUEST PAIRING CODE (STABLE LINK DEVICE)
+   REQUEST PAIRING CODE (100% STABLE LINK DEVICE)
 ========================================================= */
 
 async function requestPairCode(phoneNumber) {
@@ -284,18 +279,17 @@ async function requestPairCode(phoneNumber) {
   const sessionId = `session_${cleanNumber}`;
   const sessionDir = getSessionFolder(sessionId);
 
-  // එකම නම්බර් එකෙන් පරණ socket එකක් තිබ්බොත් පමණක් close කිරීම
+  // Close existing temporary socket if already opened
   const oldSocket = global.allActiveSessions.get(sessionId);
   if (oldSocket) {
-    console.log(`♻️ [OLD SOCKET] Replacing session for ${cleanNumber}`);
     try { oldSocket.ev.removeAllListeners("connection.update"); } catch {}
     try { oldSocket.end(undefined); } catch {}
     global.activeBotSockets.delete(oldSocket);
     global.allActiveSessions.delete(sessionId);
-    await delay(1000);
+    await delay(500);
   }
 
-  // පරණ කැඩිච්ච session files ඉවත් කර fresh session එකක් සෑදීම
+  // Clear broken session cache for this specific number only
   try {
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -304,29 +298,31 @@ async function requestPairCode(phoneNumber) {
   ensureBaseDir();
   fs.mkdirSync(sessionDir, { recursive: true });
 
-  console.log(`📱 [PAIRING] Starting socket handshake for ${cleanNumber}`);
+  console.log(`📱 [PAIRING] Starting socket for ${cleanNumber}...`);
   const sock = await createMultiSocket(sessionId, cleanNumber, true);
 
   return new Promise((resolve, reject) => {
-    let isHandled = false;
+    let resolved = false;
 
     const timeout = setTimeout(() => {
-      if (isHandled) return;
-      isHandled = true;
-      sock.ev.off("connection.update", onConnUpdate);
-      reject(new Error("Pairing code generation timed out. Please try again."));
-    }, 45000);
+      if (resolved) return;
+      resolved = true;
+      reject(new Error("Pairing code timeout. Please refresh and request a new code."));
+    }, 40000);
 
-    const generateCode = async () => {
-      if (isHandled) return;
+    const requestCode = async () => {
+      if (resolved) return;
       if (sock.authState?.creds?.registered) return;
 
       try {
-        console.log(`🔐 [PAIRING] Requesting pairing code from WhatsApp...`);
+        // WhatsApp socket handshake එක නිසි පරිදි සම්පූර්ණ වීමට තත්පර 1.5ක් ලබාදීම
+        await delay(1500);
+
+        console.log(`🔐 [PAIRING] Requesting Pairing Code from WhatsApp for ${cleanNumber}...`);
         const rawCode = await sock.requestPairingCode(cleanNumber);
 
         if (!rawCode) {
-          throw new Error("WhatsApp did not return a pairing code.");
+          throw new Error("WhatsApp did not return a valid pairing code.");
         }
 
         const formattedCode =
@@ -334,49 +330,40 @@ async function requestPairCode(phoneNumber) {
             ? `${String(rawCode).slice(0, 4)}-${String(rawCode).slice(4)}`
             : String(rawCode);
 
-        console.log(`✅ [PAIRING CODE] ${cleanNumber}: ${formattedCode}`);
+        console.log(`✅ [PAIRING CODE GENERATED] ${cleanNumber}: ${formattedCode}`);
 
-        isHandled = true;
+        resolved = true;
         clearTimeout(timeout);
-        sock.ev.off("connection.update", onConnUpdate);
-
-        resolve({
-          code: formattedCode,
-          socket: sock
-        });
+        resolve({ code: formattedCode, socket: sock });
       } catch (err) {
-        isHandled = true;
-        clearTimeout(timeout);
-        sock.ev.off("connection.update", onConnUpdate);
-        console.error(`❌ [CODE ERROR] ${cleanNumber}:`, err.message);
-        reject(err);
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          console.error(`❌ [PAIRING ERROR] ${cleanNumber}:`, err.message);
+          reject(err);
+        }
       }
     };
 
-    const onConnUpdate = async (update) => {
-      if (isHandled) return;
+    // Socket status එක 'connecting' තත්ත්වයට පත් වූ විගස code එක generate කිරීම
+    sock.ev.on("connection.update", async (update) => {
       const { connection, qr } = update;
-
-      // Socket එක WhatsApp engine එකට connect වූ වහාම code එක ලබා ගැනීම
       if (connection === "connecting" || qr) {
-        await delay(1200);
-        await generateCode();
+        await requestCode();
       }
-    };
+    });
 
-    sock.ev.on("connection.update", onConnUpdate);
-
-    // Fallback: Handshake update එක miss වුණොත් තත්පර 3 කින් code එක ඉල්ලීම
+    // Fallback trigger
     setTimeout(async () => {
-      if (!isHandled) {
-        await generateCode();
+      if (!resolved) {
+        await requestCode();
       }
-    }, 3500);
+    }, 2500);
   });
 }
 
 /* =========================================================
-   BACKWARD COMPATIBILITY & EXPORTS
+   EXPORTS
 ========================================================= */
 
 async function startSavedSocket() {
