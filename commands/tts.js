@@ -13,23 +13,24 @@ try {
   ffmpegPath = "ffmpeg";
 }
 
-// ElevenLabs Configuration
-const ELEVENLABS_API_KEY = "sk_2c61d3d5c8070d111cb1b41c92e6d64e4cce8f60036790b6";
+// FreeTTS.org API Configuration
+const FREETTS_API_KEY = "ft_live_EZmwd9gPjDLUjaT1EX39Z97tuMbtpDMj";
 
-// Voice IDs (ElevenLabs Pre-made Super Realistic Voices)
-// Rachel: Ultra natural cute young girl voice
-// Adam / Josh: Deep natural boy/guy voice
+// Voice Selection
+// Female / Male voices
 const VOICES = {
-  girl: "21m00Tcm4TlvDq8ikWAM", // Rachel (Female)
-  boy: "TxGEqnHWrfWFTfGW9XjX"   // Josh (Male)
+  girl: "en-US-JennyNeural",   // Natural Female
+  boy: "en-US-GuyNeural",      // Natural Male
+  si_girl: "si-LK-ThiliniNeural", // Sinhala Female (if supported)
+  si_boy: "si-LK-SameeraNeural"   // Sinhala Male (if supported)
 };
 
 // WhatsApp Android Playable OGG Opus converter
 function convertToWhatsAppVoice(inputBuffer) {
   return new Promise((resolve, reject) => {
     const tempId = Date.now() + "_" + Math.random().toString(36).substring(7);
-    const tempInput = path.join(os.tmpdir(), `el_in_${tempId}.mp3`);
-    const tempOutput = path.join(os.tmpdir(), `el_out_${tempId}.ogg`);
+    const tempInput = path.join(os.tmpdir(), `tts_in_${tempId}.mp3`);
+    const tempOutput = path.join(os.tmpdir(), `tts_out_${tempId}.ogg`);
 
     fs.writeFileSync(tempInput, inputBuffer);
 
@@ -39,9 +40,7 @@ function convertToWhatsAppVoice(inputBuffer) {
     exec(cmd, (error) => {
       try { if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput); } catch (e) {}
 
-      if (error) {
-        return reject(error);
-      }
+      if (error) return reject(error);
 
       try {
         const outBuf = fs.readFileSync(tempOutput);
@@ -54,10 +53,30 @@ function convertToWhatsAppVoice(inputBuffer) {
   });
 }
 
+// Fallback Free Voice Generator (Google / StreamElements)
+async function getFallbackVoice(text, isBoy) {
+  const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
+  let audioUrl = "";
+
+  if (hasSinhala) {
+    audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=si&q=${encodeURIComponent(text)}`;
+  } else {
+    const voiceName = isBoy ? "Brian" : "Salli";
+    audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=${voiceName}&text=${encodeURIComponent(text)}`;
+  }
+
+  const res = await axios.get(audioUrl, {
+    responseType: "arraybuffer",
+    timeout: 25000,
+    headers: { "User-Agent": "Mozilla/5.0" }
+  });
+  return Buffer.from(res.data);
+}
+
 module.exports = {
   name: "ttsgirl",
   alias: ["ttsboy", "tts", "speak", "voice"],
-  desc: "Convert text to realistic AI Voice Note using ElevenLabs",
+  desc: "Convert text to Voice Note using FreeTTS.org API",
   category: "convert",
 
   async execute(sock, msg, args, chatJid, extra = {}) {
@@ -74,12 +93,9 @@ module.exports = {
 
       text = String(text).trim();
 
-      // Command එක මොකක්ද කියලා හඳුනාගැනීම (boy ද girl ද කියලා)
       const fullBody = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || "").toLowerCase();
       const isBoy = fullBody.startsWith(".ttsboy") || extra?.body?.toLowerCase()?.startsWith(".ttsboy");
 
-      const gender = isBoy ? "boy" : "girl";
-      const voiceId = isBoy ? VOICES.boy : VOICES.girl;
       const emoji = isBoy ? "🎙️" : "💖";
       const doneEmoji = isBoy ? "🔥" : "💋";
 
@@ -88,14 +104,14 @@ module.exports = {
           chatJid,
           {
             text:
-              `🎙️ *ELEVENLABS AI VOICE NOTE*\n\n` +
+              `🎙️ *FREETTS VOICE NOTE*\n\n` +
               `හඬ බවට පත් කිරීමට text එකක් ලබාදෙන්න.\n\n` +
               `*Commands:*\n` +
               `👩 *.ttsgirl* <text> - කෙල්ලෙක්ගෙ කටහඬින්\n` +
               `👨 *.ttsboy* <text> - කොල්ලෙක්ගෙ කටහඬින්\n\n` +
               `*උදාහරණ:*\n` +
-              `.ttsgirl කොහොමද සුදූ, ඔයා කෑවද?\n` +
-              `.ttsboy මචං අද හවසට සෙට් වෙමුද?`
+              `.ttsgirl කොහොමද සුදූ ඔයාට\n` +
+              `.ttsboy මචං මොකද වෙන්නේ`
           },
           { quoted: msg }
         );
@@ -103,41 +119,52 @@ module.exports = {
 
       await sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } });
 
-      // ElevenLabs API Request
-      const elevenUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+      const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
+      let selectedVoice = hasSinhala 
+        ? (isBoy ? VOICES.si_boy : VOICES.si_girl) 
+        : (isBoy ? VOICES.boy : VOICES.girl);
 
-      const response = await axios.post(
-        elevenUrl,
-        {
-          text: text,
-          model_id: "eleven_multilingual_v2", // සිංහල, Singlish සහ English සුපිරියටම උච්චාරණය වන model එක
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.0,
-            use_speaker_boost: true
-          }
-        },
-        {
-          headers: {
-            "xi-api-key": ELEVENLABS_API_KEY,
-            "Content-Type": "application/json",
-            "Accept": "audio/mpeg"
+      let rawBuffer = null;
+
+      // 1. FreeTTS.org API එකෙන් Audio ලබා ගැනීම
+      try {
+        const ftResponse = await axios.post(
+          "https://freetts.org/api/v1/tts",
+          {
+            text: text,
+            voice: selectedVoice,
+            format: "mp3"
           },
-          responseType: "arraybuffer",
-          timeout: 45000
-        }
-      );
+          {
+            headers: {
+              "Authorization": `Bearer ${FREETTS_API_KEY}`,
+              "Content-Type": "application/json"
+            },
+            timeout: 20000
+          }
+        );
 
-      const rawBuffer = Buffer.from(response.data);
-      if (!rawBuffer.length) {
-        throw new Error("ElevenLabs returned empty audio");
+        const audioUrl = ftResponse.data?.audio_url || ftResponse.data?.url || ftResponse.data?.data?.url;
+
+        if (audioUrl) {
+          const dlRes = await axios.get(audioUrl, { responseType: "arraybuffer", timeout: 20000 });
+          rawBuffer = Buffer.from(dlRes.data);
+        } else if (Buffer.isBuffer(ftResponse.data)) {
+          rawBuffer = ftResponse.data;
+        }
+      } catch (apiErr) {
+        console.warn(`FreeTTS API Error (${apiErr.message}). Switching to Fallback Engine...`);
       }
 
-      // WhatsApp Playable Voice Note (OGG Opus) එකක් බවට convert කිරීම
+      // 2. FreeTTS එකෙන් නොලැබුණහොත් Fallback Engine එකෙන් ලබා ගැනීම
+      if (!rawBuffer || !rawBuffer.length) {
+        rawBuffer = await getFallbackVoice(text, isBoy);
+      }
+
+      // 3. WhatsApp Playable Voice Note (OGG Opus) එකක් බවට Convert කිරීම
       const voiceBuffer = await convertToWhatsAppVoice(rawBuffer);
 
-      // WhatsApp Voice Note (PTT) විදිහට යැවීම (Profile icon & Waveform සහිතව)
+      // 4. Send as WhatsApp Voice Note (PTT)
       await sock.sendMessage(
         chatJid,
         {
@@ -151,20 +178,10 @@ module.exports = {
       await sock.sendMessage(chatJid, { react: { text: doneEmoji, key: msg.key } });
 
     } catch (error) {
-      console.error("[ELEVENLABS TTS ERROR]:", error?.response?.data ? error.response.data.toString() : error.message);
-      
-      let errMsg = error.message;
-      if (error.response?.status === 401) {
-        errMsg = "ElevenLabs API Key එක වැරදියි හෝ Expire වී ඇත.";
-      } else if (error.response?.status === 429) {
-        errMsg = "ElevenLabs Quota/Limit එක ඉවර වී ඇත.";
-      }
-
+      console.error("[TTS ERROR]:", error);
       await sock.sendMessage(
         chatJid,
-        {
-          text: `❌ *Voice Error:*\n_${errMsg}_`
-        },
+        { text: `❌ *Voice Error:*\n_${error.message || "Unknown error"}_` },
         { quoted: msg }
       );
     }
