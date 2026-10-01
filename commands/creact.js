@@ -1,67 +1,66 @@
-const mongoose = require("mongoose");
-
-// Shared Multi-Bot Database Collection
-const MetaSchema = new mongoose.Schema({
-  key: { type: String, unique: true },
-  value: mongoose.Schema.Types.Mixed,
-  updatedAt: { type: Date, default: Date.now }
-});
-const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
-
 module.exports = {
   name: "creact",
-  alias: ["channelreact", "chr", "multireact"],
-  desc: "Set Reactions to Channel from ALL Active Bots (Developer Only)",
+  alias: ["channelreact", "chr", "postreact"],
+  desc: "React to a specific WhatsApp Channel Post using ALL Active Bots",
   category: "owner",
 
   async execute(sock, msg, args, from, { reply, isDev, prefix }) {
     try {
+      // 1. Developer Only Permission Check
       if (!isDev) {
-        return await reply("🚫 *මෙම Command එක භාවිතා කළ හැක්කේ Bot Developer හට පමණි!*");
+        return await reply("🚫 *මෙම Command එක භාවිතා කිරීමට අවසර ඇත්තේ Bot Developer හට පමණි!*");
       }
 
       const input = args.join(" ").trim();
 
       if (!input || !input.includes("whatsapp.com/channel/")) {
         return await reply(
-          `╭───『 𝐌𝐔𝐋𝐓𝐈-𝐁𝐎𝐓 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 𝐑𝐄𝐀𝐂𝐓 』───◆\n` +
+          `╭───『 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 𝐏𝐎𝐒𝐓 𝐑𝐄𝐀𝐂𝐓 』───◆\n` +
           `│\n` +
           `│ ⚠️ *භාවිතය:*\n` +
-          `│ *${prefix}creact <channel_link> , <emojis>*\n` +
+          `│ *${prefix}creact <post_link> , <emojis>*\n` +
           `│\n` +
           `│ 📌 *උදාහරණ:*\n` +
-          `│ ${prefix}creact https://whatsapp.com/channel/0029VaXXXXX , 🤪,😜,🙏,🥹\n` +
+          `│ ${prefix}creact https://whatsapp.com/channel/0029VaXXXXX/342 , 🤪,😜,🙏,🥹\n` +
           `│\n` +
-          `│ 💡 *Auto-React Disable කිරීමට:*\n` +
-          `│ ${prefix}creact https://whatsapp.com/channel/0029VaXXXXX , off\n` +
+          `│ 💡 *සටහන:* Channel Post එක උඩ Long Press කර Copy Link ගත් විට අගට Message ID එක ලැබේ.\n` +
           `│\n` +
-          `╰──────────────────────────◆\n` +
-          `> Active සියලුම Bots ලා හරහා Reactions වැටෙනු ඇත!`
+          `╰──────────────────────────◆`
         );
       }
 
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-      let channelLink = "";
+      // Link එක සහ Emojis වෙන් කර ගැනීම
+      let postLink = "";
       let emojiPart = "";
 
       if (input.includes(",")) {
         const parts = input.split(",");
-        channelLink = parts[0].trim();
+        postLink = parts[0].trim();
         emojiPart = parts.slice(1).join(",").trim();
       } else {
-        const splitMatch = input.match(/(https:\/\/whatsapp\.com\/channel\/[^\s,]+)(.*)/);
-        if (splitMatch) {
-          channelLink = splitMatch[1].trim();
-          emojiPart = splitMatch[2].replace(/^[.,\s]+/, "").trim();
+        const match = input.match(/(https:\/\/whatsapp\.com\/channel\/[^\s,]+)(.*)/);
+        if (match) {
+          postLink = match[1].trim();
+          emojiPart = match[2].replace(/^[.,\s]+/, "").trim();
         }
       }
 
-      const inviteCode = channelLink.split("whatsapp.com/channel/")[1]?.split("/")[0]?.split("?")[0]?.trim();
+      // Link එකෙන් Invite Code එක සහ Server Post ID එක ලබාගැනීම
+      const linkParts = postLink.split("whatsapp.com/channel/")[1]?.split("/");
+      const inviteCode = linkParts ? linkParts[0]?.trim() : null;
+      const serverMessageId = linkParts && linkParts[1] ? linkParts[1].split("?")[0]?.trim() : null;
+
       if (!inviteCode) {
-        return await reply("❌ වලංගු WhatsApp Channel Link එකක් ලබාදෙන්න!");
+        return await reply("❌ වලංගු WhatsApp Channel Post Link එකක් ලබාදෙන්න!");
       }
 
+      if (!serverMessageId) {
+        return await reply("⚠️ *කරුණාකර නිවැරදි Post Link එකක් ලබාදෙන්න!*\n(Link එකේ අගට Post ID එක තිබිය යුතුය. උදා: `https://whatsapp.com/channel/xxx/123`)");
+      }
+
+      // Channel Metadata ලබාගැනීම
       const channelMeta = await sock.newsletterMetadata("invite", inviteCode);
       const channelJid = channelMeta?.id;
 
@@ -69,55 +68,58 @@ module.exports = {
         return await reply("❌ Channel එක සොයාගත නොහැකි විය. Bots ලාට Admin බලතල හෝ Channel access තිබේදැයි බලන්න.");
       }
 
-      const channelName = channelMeta?.name || "WhatsApp Channel";
-
-      if (emojiPart.toLowerCase() === "off") {
-        await BotMeta.findOneAndDelete({ key: `creact_${channelJid}` });
-        if (global.channelReactMap) {
-          global.channelReactMap.delete(channelJid);
-        }
-        await sock.sendMessage(from, { react: { text: "🔇", key: msg.key } });
-        return await reply(`✅ *${channelName}* සඳහා Multi-Bot Auto Reactions අක්‍රිය කරන ලදී!`);
-      }
-
-      // Emojis වෙන් කරගැනීම
+      // Emojis Array එකක් කර ගැනීම
       const emojiList = emojiPart
         .split(/[,|\s]+/)
         .map(e => e.trim())
         .filter(e => e.length > 0);
 
       if (emojiList.length === 0) {
-        return await reply("⚠️ React කිරීම සඳහා අවම වශයෙන් එක් Emoji එකක් ලබාදෙන්න!");
+        return await reply("⚠️️ React කිරීමට අවම වශයෙන් එක් Emoji එකක් හෝ ලබාදෙන්න!\n*උදා:* 🤪,😜,🙏,🥹");
       }
 
-      // Save to MongoDB (සියලුම bots ලාට sync වීමට)
-      await BotMeta.findOneAndUpdate(
-        { key: `creact_${channelJid}` },
-        { value: emojiList, updatedAt: new Date() },
-        { upsert: true }
-      );
+      // Active Bots Socket Pool එක ලබාගැනීම
+      const botSockets = (global.activeBotSockets && global.activeBotSockets.size > 0)
+        ? Array.from(global.activeBotSockets)
+        : [sock];
 
-      if (!global.channelReactMap) global.channelReactMap = new Map();
-      global.channelReactMap.set(channelJid, emojiList);
+      let successCount = 0;
+      let delay = 0;
+
+      // Active ඉන්න සියලුම Bots ලා හරහා තනි Post එකට React කිරීම
+      for (let i = 0; i < botSockets.length; i++) {
+        const currentSock = botSockets[i];
+        const selectedEmoji = emojiList[i % emojiList.length]; // Emojis මාරුවෙන් මාරුවට යැවීම
+
+        setTimeout(async () => {
+          try {
+            await currentSock.newsletterReactMessage(channelJid, serverMessageId, selectedEmoji);
+            successCount++;
+          } catch (e) {
+            console.error("Single Post React Error:", e.message);
+          }
+        }, delay);
+
+        delay += 500; // Spam detect නොවී එක පිට එක වැටීමට තත්පර 0.5 ක පරතරයක්
+      }
 
       await sock.sendMessage(from, { react: { text: "🔥", key: msg.key } });
 
       return await reply(
-        `╭───『 𝐌𝐔𝐋𝐓𝐈-𝐁𝐎𝐓 𝐑𝐄𝐀𝐂𝐓 𝐒𝐄𝐓 』───◆\n` +
+        `╭───『 𝐑𝐄𝐀𝐂𝐓 𝐒𝐄𝐍𝐓 𝐒𝐔𝐂𝐂𝐄𝐒𝐒 』───◆\n` +
         `│\n` +
-        `│ 📢 *Channel:* ${channelName}\n` +
-        `│ 🆔 *JID:* ${channelJid}\n` +
+        `│ 📢 *Channel:* ${channelMeta?.name || "Channel"}\n` +
+        `│ 📌 *Post ID:* ${serverMessageId}\n` +
         `│ 🎭 *Emojis:* ${emojiList.join(" ")}\n` +
-        `│ 🤖 *Target:* All Active Bots In Cluster\n` +
-        `│ ⚡ *Status:* Online & Syncing\n` +
+        `│ 🤖 *Target Bots:* ${botSockets.length} Active Bots\n` +
+        `│ 🚀 *Action:* Reacted to this Post Only!\n` +
         `│\n` +
-        `╰──────────────────────────◆\n` +
-        `> දැන් Channel එකේ වැටෙන සෑම post එකකටම active සියලුම bot ලාගෙන් react වැටේ! 🚀`
+        `╰──────────────────────────◆`
       );
 
     } catch (err) {
       console.error("creact error:", err);
-      return await reply(`❌ Channel React Error: ${err.message || "Failed to setup"}`);
+      return await reply(`❌ React Error: ${err.message || "Failed to react to channel post"}`);
     }
   }
 };
