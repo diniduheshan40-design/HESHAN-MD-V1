@@ -4,7 +4,7 @@ const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
 
-// FFmpeg Path Configuration (csong එකේ ක්‍රමයම)
+// FFmpeg Path Setup
 let ffmpegPath = "ffmpeg";
 try {
   const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
@@ -13,17 +13,28 @@ try {
   ffmpegPath = "ffmpeg";
 }
 
-// csong එකේ 100% Play වන WhatsApp Original Voice Note Converter එක
+// ElevenLabs Configuration
+const ELEVENLABS_API_KEY = "sk_2c61d3d5c8070d111cb1b41c92e6d64e4cce8f60036790b6";
+
+// Voice IDs (ElevenLabs Pre-made Super Realistic Voices)
+// Rachel: Ultra natural cute young girl voice
+// Adam / Josh: Deep natural boy/guy voice
+const VOICES = {
+  girl: "21m00Tcm4TlvDq8ikWAM", // Rachel (Female)
+  boy: "TxGEqnHWrfWFTfGW9XjX"   // Josh (Male)
+};
+
+// WhatsApp Android Playable OGG Opus converter
 function convertToWhatsAppVoice(inputBuffer) {
   return new Promise((resolve, reject) => {
     const tempId = Date.now() + "_" + Math.random().toString(36).substring(7);
-    const tempInput = path.join(os.tmpdir(), `tts_in_${tempId}.mp3`);
-    const tempOutput = path.join(os.tmpdir(), `tts_out_${tempId}.opus`);
+    const tempInput = path.join(os.tmpdir(), `el_in_${tempId}.mp3`);
+    const tempOutput = path.join(os.tmpdir(), `el_out_${tempId}.ogg`);
 
     fs.writeFileSync(tempInput, inputBuffer);
 
-    // WhatsApp Standard Opus Parameters: 48kHz, mono, 64k VBR
-    const cmd = `"${ffmpegPath}" -y -i "${tempInput}" -c:a libopus -b:a 64k -vbr on -compression_level 10 -ar 48000 -ac 1 "${tempOutput}"`;
+    // WhatsApp Mobile strictly requires libopus mono 48000Hz OGG container
+    const cmd = `"${ffmpegPath}" -y -i "${tempInput}" -c:a libopus -b:a 64k -ar 48000 -ac 1 -avoid_negative_ts make_zero "${tempOutput}"`;
 
     exec(cmd, (error) => {
       try { if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput); } catch (e) {}
@@ -33,20 +44,20 @@ function convertToWhatsAppVoice(inputBuffer) {
       }
 
       try {
-        const outputBuffer = fs.readFileSync(tempOutput);
+        const outBuf = fs.readFileSync(tempOutput);
         try { if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput); } catch (e) {}
-        resolve(outputBuffer);
-      } catch (readErr) {
-        reject(readErr);
+        resolve(outBuf);
+      } catch (err) {
+        reject(err);
       }
     });
   });
 }
 
 module.exports = {
-  name: "tts",
-  alias: ["speak", "say", "voice", "girl"],
-  desc: "Convert text to real playable WhatsApp voice note",
+  name: "ttsgirl",
+  alias: ["ttsboy", "tts", "speak", "voice"],
+  desc: "Convert text to realistic AI Voice Note using ElevenLabs",
   category: "convert",
 
   async execute(sock, msg, args, chatJid, extra = {}) {
@@ -63,70 +74,96 @@ module.exports = {
 
       text = String(text).trim();
 
+      // Command එක මොකක්ද කියලා හඳුනාගැනීම (boy ද girl ද කියලා)
+      const fullBody = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || "").toLowerCase();
+      const isBoy = fullBody.startsWith(".ttsboy") || extra?.body?.toLowerCase()?.startsWith(".ttsboy");
+
+      const gender = isBoy ? "boy" : "girl";
+      const voiceId = isBoy ? VOICES.boy : VOICES.girl;
+      const emoji = isBoy ? "🎙️" : "💖";
+      const doneEmoji = isBoy ? "🔥" : "💋";
+
       if (!text) {
         return await sock.sendMessage(
           chatJid,
           {
             text:
-              `🎙️ *TTS VOICE NOTE*\n\n` +
-              `හඬ බවට පත් කිරීමට text එකක් දෙන්න.\n\n` +
-              `*Examples:*\n` +
-              `.tts අම්මට නිදිමතයි\n` +
-              `.tts Hello cute girl`
+              `🎙️ *ELEVENLABS AI VOICE NOTE*\n\n` +
+              `හඬ බවට පත් කිරීමට text එකක් ලබාදෙන්න.\n\n` +
+              `*Commands:*\n` +
+              `👩 *.ttsgirl* <text> - කෙල්ලෙක්ගෙ කටහඬින්\n` +
+              `👨 *.ttsboy* <text> - කොල්ලෙක්ගෙ කටහඬින්\n\n` +
+              `*උදාහරණ:*\n` +
+              `.ttsgirl කොහොමද සුදූ, ඔයා කෑවද?\n` +
+              `.ttsboy මචං අද හවසට සෙට් වෙමුද?`
           },
           { quoted: msg }
         );
       }
 
-      await sock.sendMessage(chatJid, { react: { text: "🎙️", key: msg.key } });
+      await sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } });
 
-      const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
-      let audioUrl = "";
+      // ElevenLabs API Request
+      const elevenUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
-      if (hasSinhala) {
-        // Sinhala Voice
-        audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=si&q=${encodeURIComponent(text)}`;
-      } else {
-        // English Cute Girl (Salli - StreamElements)
-        audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Salli&text=${encodeURIComponent(text)}`;
-      }
-
-      // Download Raw Audio Stream
-      const response = await axios.get(audioUrl, {
-        responseType: "arraybuffer",
-        timeout: 25000,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      const response = await axios.post(
+        elevenUrl,
+        {
+          text: text,
+          model_id: "eleven_multilingual_v2", // සිංහල, Singlish සහ English සුපිරියටම උච්චාරණය වන model එක
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0.0,
+            use_speaker_boost: true
+          }
+        },
+        {
+          headers: {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg"
+          },
+          responseType: "arraybuffer",
+          timeout: 45000
         }
-      });
+      );
 
-      const rawAudioBuffer = Buffer.from(response.data);
-      if (!rawAudioBuffer.length) {
-        throw new Error("TTS server returned empty audio");
+      const rawBuffer = Buffer.from(response.data);
+      if (!rawBuffer.length) {
+        throw new Error("ElevenLabs returned empty audio");
       }
 
-      // csong එකේ engine එක හරහා Real Opus Buffer එකක් ලබා ගැනීම
-      const voiceBuffer = await convertToWhatsAppVoice(rawAudioBuffer);
+      // WhatsApp Playable Voice Note (OGG Opus) එකක් බවට convert කිරීම
+      const voiceBuffer = await convertToWhatsAppVoice(rawBuffer);
 
-      // WhatsApp Playable Voice Note (PTT) එකක් විදිහට යැවීම
+      // WhatsApp Voice Note (PTT) විදිහට යැවීම (Profile icon & Waveform සහිතව)
       await sock.sendMessage(
         chatJid,
         {
           audio: voiceBuffer,
           mimetype: "audio/ogg; codecs=opus",
-          ptt: true // මේකෙන් දකුණු පැත්තේ Profile Picture එක වැටිලා Voice Note එකක් ලෙස play වේ
+          ptt: true
         },
         { quoted: msg }
       );
 
-      await sock.sendMessage(chatJid, { react: { text: "😘", key: msg.key } });
+      await sock.sendMessage(chatJid, { react: { text: doneEmoji, key: msg.key } });
 
     } catch (error) {
-      console.error("[TTS ERROR]:", error);
+      console.error("[ELEVENLABS TTS ERROR]:", error?.response?.data ? error.response.data.toString() : error.message);
+      
+      let errMsg = error.message;
+      if (error.response?.status === 401) {
+        errMsg = "ElevenLabs API Key එක වැරදියි හෝ Expire වී ඇත.";
+      } else if (error.response?.status === 429) {
+        errMsg = "ElevenLabs Quota/Limit එක ඉවර වී ඇත.";
+      }
+
       await sock.sendMessage(
         chatJid,
         {
-          text: `❌ *TTS Voice Error*\n\n_${error.message || "Unknown error"}_`
+          text: `❌ *Voice Error:*\n_${errMsg}_`
         },
         { quoted: msg }
       );
