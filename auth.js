@@ -14,280 +14,808 @@ const {
 } = require("@whiskeysockets/baileys");
 
 const logger = pino({ level: "silent" });
+
 const baseSessionDir = path.join(__dirname, "sessions");
 
-// Global Active Sessions Map (Phone -> Socket)
-if (!global.activeBotSockets) global.activeBotSockets = new Set();
-if (!global.allActiveSessions) global.allActiveSessions = new Map();
+if (!global.activeBotSockets) {
+  global.activeBotSockets = new Set();
+}
+
+if (!global.allActiveSessions) {
+  global.allActiveSessions = new Map();
+}
 
 let onSocketCreatedCallback = null;
 
 /* =========================================================
-   MONGODB MULTI-SESSION MODEL
+   MONGODB SESSION MODEL
 ========================================================= */
 
 const SessionSchema = new mongoose.Schema(
   {
-    sessionId: { type: String, unique: true, required: true },
-    phoneNumber: { type: String, required: true },
-    files: { type: mongoose.Schema.Types.Mixed, default: {} }
+    sessionId: {
+      type: String,
+      unique: true,
+      required: true
+    },
+
+    phoneNumber: {
+      type: String,
+      required: true
+    },
+
+    files: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
 const SessionModel =
   mongoose.models.DarkDinuSession ||
   mongoose.model("DarkDinuSession", SessionSchema);
 
+/* =========================================================
+   DIRECTORY HELPERS
+========================================================= */
+
 function ensureBaseDir() {
   if (!fs.existsSync(baseSessionDir)) {
-    fs.mkdirSync(baseSessionDir, { recursive: true });
+    fs.mkdirSync(baseSessionDir, {
+      recursive: true
+    });
   }
 }
 
 function getSessionFolder(sessionId) {
   ensureBaseDir();
-  const targetDir = path.join(baseSessionDir, sessionId);
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
+
+  const folder = path.join(
+    baseSessionDir,
+    sessionId
+  );
+
+  if (!fs.existsSync(folder)) {
+    fs.mkdirSync(folder, {
+      recursive: true
+    });
   }
-  return targetDir;
+
+  return folder;
 }
 
 /* =========================================================
-   BACKUP SPECIFIC SESSION TO MONGODB
+   BACKUP SESSION TO MONGODB
 ========================================================= */
 
 async function backupSession(sessionId, phoneNumber) {
   try {
-    const sDir = path.join(baseSessionDir, sessionId);
-    if (!fs.existsSync(sDir)) return;
+    const sessionDir = path.join(
+      baseSessionDir,
+      sessionId
+    );
+
+    if (!fs.existsSync(sessionDir)) {
+      return;
+    }
 
     const files = {};
-    const allFiles = fs.readdirSync(sDir);
 
-    for (const f of allFiles) {
-      const fPath = path.join(sDir, f);
-      if (fs.existsSync(fPath) && fs.statSync(fPath).isFile()) {
-        const safeKey = f.replace(/\./g, "___dot___");
-        files[safeKey] = fs.readFileSync(fPath, "utf8");
+    const list = fs.readdirSync(sessionDir);
+
+    for (const file of list) {
+      const filePath = path.join(
+        sessionDir,
+        file
+      );
+
+      if (
+        fs.existsSync(filePath) &&
+        fs.statSync(filePath).isFile()
+      ) {
+        const safeName = file.replace(
+          /\./g,
+          "___dot___"
+        );
+
+        files[safeName] =
+          fs.readFileSync(filePath, "utf8");
       }
     }
 
-    if (Object.keys(files).length === 0) return;
+    if (!Object.keys(files).length) {
+      return;
+    }
 
     await SessionModel.findOneAndUpdate(
-      { sessionId },
-      { $set: { files, phoneNumber } },
-      { upsert: true }
+      {
+        sessionId
+      },
+      {
+        $set: {
+          files,
+          phoneNumber
+        }
+      },
+      {
+        upsert: true,
+        new: true
+      }
+    );
+
+    console.log(
+      `💾 [MONGO BACKUP] ${phoneNumber}`
     );
   } catch (error) {
-    console.error(`❌ [BACKUP ERROR: ${sessionId}]:`, error.message);
+    console.error(
+      `❌ [BACKUP ERROR] ${sessionId}:`,
+      error.message
+    );
   }
 }
 
 /* =========================================================
-   CREATE SOCKET FOR SPECIFIC SESSION (PARALLEL)
+   CREATE SOCKET
 ========================================================= */
 
-async function createMultiSocket(sessionId, phoneNumber, isPairing = false) {
-  const sDir = getSessionFolder(sessionId);
-  const { state, saveCreds } = await useMultiFileAuthState(sDir);
-  const { version } = await fetchLatestBaileysVersion();
+async function createMultiSocket(
+  sessionId,
+  phoneNumber,
+  isPairing = false
+) {
+  const sessionDir =
+    getSessionFolder(sessionId);
+
+  const {
+    state,
+    saveCreds
+  } = await useMultiFileAuthState(
+    sessionDir
+  );
+
+  const {
+    version
+  } = await fetchLatestBaileysVersion();
+
+  console.log(
+    `🔧 [SOCKET] Creating socket for ${phoneNumber}`
+  );
 
   const sock = makeWASocket({
     version,
+
     logger,
+
     auth: {
       creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger)
+
+      keys: makeCacheableSignalKeyStore(
+        state.keys,
+        logger
+      )
     },
-    browser: Browsers.windows("Chrome"),
+
+    browser: Browsers.ubuntu(
+      "Chrome"
+    ),
+
     printQRInTerminal: false,
+
     syncFullHistory: false,
+
     markOnlineOnConnect: false,
+
     connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 15000,
+
     defaultQueryTimeoutMs: 60000,
-    emitOwnEvents: true
+
+    keepAliveIntervalMs: 15000,
+
+    emitOwnEvents: true,
+
+    generateHighQualityLinkPreview: false,
+
+    retryRequestDelayMs: 250,
+
+    maxMsgRetryCount: 5
   });
 
   sock.sessionId = sessionId;
   sock.phoneNumber = phoneNumber;
 
-  // Creds save
-  sock.ev.on("creds.update", async () => {
-    try {
-      await saveCreds();
-      await backupSession(sessionId, phoneNumber);
-    } catch (e) {}
-  });
+  /* =======================================================
+     SAVE CREDENTIALS
+  ======================================================= */
 
-  // Connection Updates
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, isNewLogin } = update;
+  sock.ev.on(
+    "creds.update",
+    async () => {
+      try {
+        await saveCreds();
 
-    if (connection === "open") {
-      console.log(`\x1b[32m%s\x1b[0m`, `🟢 [CONNECTED]: Session ${phoneNumber} is Active & Ready!`);
-      global.activeBotSockets.add(sock);
-      global.allActiveSessions.set(sessionId, sock);
-      await backupSession(sessionId, phoneNumber);
+        await backupSession(
+          sessionId,
+          phoneNumber
+        );
+      } catch (error) {
+        console.error(
+          "❌ Creds save error:",
+          error.message
+        );
+      }
     }
+  );
 
-    if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      console.log(`⚠️ [SESSION CLOSED: ${phoneNumber}] Status: ${statusCode}`);
+  /* =======================================================
+     CONNECTION UPDATE
+  ======================================================= */
 
-      global.activeBotSockets.delete(sock);
-      global.allActiveSessions.delete(sessionId);
+  sock.ev.on(
+    "connection.update",
+    async (update) => {
+      const {
+        connection,
+        lastDisconnect
+      } = update;
 
-      if (statusCode === DisconnectReason.loggedOut) {
-        console.log(`🚪 [LOGGED OUT]: Removing ${phoneNumber} from database.`);
-        await SessionModel.deleteOne({ sessionId }).catch(() => {});
-        try { fs.rmSync(sDir, { recursive: true, force: true }); } catch (e) {}
-        return;
+      /* ================================================
+         CONNECTED
+      ================================================ */
+
+      if (connection === "open") {
+        console.log(
+          "\x1b[32m%s\x1b[0m",
+          `🟢 [CONNECTED] ${phoneNumber} → DARK DINU ONLINE`
+        );
+
+        global.activeBotSockets.add(
+          sock
+        );
+
+        global.allActiveSessions.set(
+          sessionId,
+          sock
+        );
+
+        await backupSession(
+          sessionId,
+          phoneNumber
+        );
       }
 
-      // Auto reconnect this specific session
-      setTimeout(async () => {
-        try {
-          console.log(`🔄 [RECONNECTING]: Restoring ${phoneNumber}...`);
-          await createMultiSocket(sessionId, phoneNumber, false);
-        } catch (e) {}
-      }, 5000);
-    }
-  });
+      /* ================================================
+         CLOSED
+      ================================================ */
 
-  if (onSocketCreatedCallback) {
-    onSocketCreatedCallback(sock);
+      if (connection === "close") {
+        const statusCode =
+          lastDisconnect?.error?.output
+            ?.statusCode;
+
+        console.log(
+          `⚠️ [CLOSED] ${phoneNumber} | Status: ${statusCode}`
+        );
+
+        global.activeBotSockets.delete(
+          sock
+        );
+
+        if (
+          global.allActiveSessions.get(
+            sessionId
+          ) === sock
+        ) {
+          global.allActiveSessions.delete(
+            sessionId
+          );
+        }
+
+        /* ==============================================
+           LOGGED OUT
+        ============================================== */
+
+        if (
+          statusCode ===
+          DisconnectReason.loggedOut
+        ) {
+          console.log(
+            `🚪 [LOGGED OUT] ${phoneNumber}`
+          );
+
+          await SessionModel.deleteOne({
+            sessionId
+          }).catch(() => {});
+
+          try {
+            fs.rmSync(
+              sessionDir,
+              {
+                recursive: true,
+                force: true
+              }
+            );
+          } catch {}
+
+          return;
+        }
+
+        /* ==============================================
+           BAD SESSION
+        ============================================== */
+
+        if (
+          statusCode ===
+          DisconnectReason.badSession
+        ) {
+          console.log(
+            `🗑️ [BAD SESSION] ${phoneNumber}`
+          );
+
+          await SessionModel.deleteOne({
+            sessionId
+          }).catch(() => {});
+
+          try {
+            fs.rmSync(
+              sessionDir,
+              {
+                recursive: true,
+                force: true
+              }
+            );
+          } catch {}
+
+          return;
+        }
+
+        /* ==============================================
+           RECONNECT
+        ============================================== */
+
+        setTimeout(
+          async () => {
+            try {
+              if (
+                global.allActiveSessions.has(
+                  sessionId
+                )
+              ) {
+                return;
+              }
+
+              console.log(
+                `🔄 [RECONNECT] ${phoneNumber}`
+              );
+
+              await createMultiSocket(
+                sessionId,
+                phoneNumber,
+                false
+              );
+            } catch (error) {
+              console.error(
+                `❌ Reconnect error ${phoneNumber}:`,
+                error.message
+              );
+            }
+          },
+          5000
+        );
+      }
+    }
+  );
+
+  /* =======================================================
+     CALLBACK
+  ======================================================= */
+
+  if (
+    onSocketCreatedCallback
+  ) {
+    try {
+      onSocketCreatedCallback(
+        sock
+      );
+    } catch {}
   }
 
   return sock;
 }
 
 /* =========================================================
-   RESTORE ALL 100+ SESSIONS AT BOT STARTUP
+   RESTORE ALL MONGO SESSIONS
 ========================================================= */
 
 async function restoreCredentials() {
   ensureBaseDir();
+
   try {
-    const allSaved = await SessionModel.find({}).lean();
-    if (!allSaved || allSaved.length === 0) {
-      console.log("ℹ️ [SESSIONS] No saved sessions found in MongoDB.");
+    const sessions =
+      await SessionModel.find({}).lean();
+
+    if (
+      !sessions ||
+      sessions.length === 0
+    ) {
+      console.log(
+        "ℹ️ [SESSIONS] No saved sessions."
+      );
+
       return false;
     }
 
-    console.log(`⚡ [SESSIONS] Found ${allSaved.length} saved bot sessions. Restoring all in parallel...`);
+    console.log(
+      `⚡ [SESSIONS] Restoring ${sessions.length} session(s)...`
+    );
 
-    for (const sessionDoc of allSaved) {
+    for (
+      const session of sessions
+    ) {
       try {
-        const { sessionId, phoneNumber, files } = sessionDoc;
-        const sDir = getSessionFolder(sessionId);
+        const {
+          sessionId,
+          phoneNumber,
+          files
+        } = session;
 
-        for (const [key, content] of Object.entries(files || {})) {
-          const fileName = key.replace(/___dot___/g, ".");
-          const filePath = path.join(sDir, fileName);
-          fs.writeFileSync(filePath, content, "utf8");
+        const sessionDir =
+          getSessionFolder(
+            sessionId
+          );
+
+        for (
+          const [
+            key,
+            content
+          ] of Object.entries(
+            files || {}
+          )
+        ) {
+          const fileName =
+            key.replace(
+              /___dot___/g,
+              "."
+            );
+
+          const filePath =
+            path.join(
+              sessionDir,
+              fileName
+            );
+
+          fs.writeFileSync(
+            filePath,
+            content,
+            "utf8"
+          );
         }
 
-        // Start this bot instance in background
-        createMultiSocket(sessionId, phoneNumber, false);
-      } catch (err) {
-        console.error("Session restore item error:", err.message);
+        console.log(
+          `🔄 [RESTORE] ${phoneNumber}`
+        );
+
+        createMultiSocket(
+          sessionId,
+          phoneNumber,
+          false
+        ).catch(
+          (error) => {
+            console.error(
+              `❌ Restore socket error ${phoneNumber}:`,
+              error.message
+            );
+          }
+        );
+
+        /*
+         * Small delay prevents 100+ sessions
+         * from hammering WhatsApp at exactly
+         * the same moment.
+         */
+        await delay(300);
+      } catch (error) {
+        console.error(
+          "❌ Session restore error:",
+          error.message
+        );
       }
     }
 
     return true;
   } catch (error) {
-    console.error("❌ Multi-session restore error:", error.message);
+    console.error(
+      "❌ Mongo restore error:",
+      error.message
+    );
+
     return false;
   }
 }
 
 /* =========================================================
-   REQUEST PAIR CODE FOR A NEW USER (WITHOUT KILLING OTHERS)
+   REQUEST PAIRING CODE
 ========================================================= */
 
-async function requestPairCode(phoneNumber) {
-  let cleanNumber = String(phoneNumber).replace(/[^0-9]/g, "");
-  if (cleanNumber.startsWith("0")) cleanNumber = "94" + cleanNumber.substring(1);
+async function requestPairCode(
+  phoneNumber
+) {
+  let cleanNumber = String(
+    phoneNumber
+  ).replace(
+    /[^0-9]/g,
+    ""
+  );
 
-  const sessionId = `session_${cleanNumber}`;
-  const sDir = getSessionFolder(sessionId);
+  /*
+   * Sri Lankan number:
+   * 0771234567
+   * -> 94771234567
+   */
 
-  // පරණ මේ නම්බර් එකේම socket එකක් තිබ්බොත් close කරනවා (අනික් අයට කිසිම හානියක් නෑ)
-  if (global.allActiveSessions.has(sessionId)) {
-    try {
-      const oldSock = global.allActiveSessions.get(sessionId);
-      oldSock.end(undefined);
-    } catch (e) {}
+  if (
+    cleanNumber.startsWith("0")
+  ) {
+    cleanNumber =
+      "94" +
+      cleanNumber.substring(1);
   }
 
-  // Create fresh socket for this user
-  const sock = await createMultiSocket(sessionId, cleanNumber, true);
+  if (
+    cleanNumber.length < 10
+  ) {
+    throw new Error(
+      "Invalid phone number."
+    );
+  }
 
-  console.log(`📱 [NEW PAIR REQUEST] Generating code for ${cleanNumber}...`);
+  const sessionId =
+    `session_${cleanNumber}`;
 
-  return new Promise((resolve, reject) => {
-    let finished = false;
-    let codeRequested = false;
+  const sessionDir =
+    getSessionFolder(
+      sessionId
+    );
 
-    const timeout = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      reject(new Error("Pairing code timeout. Please try again."));
-    }, 35000);
+  /* =======================================================
+     CLOSE ONLY SAME USER SOCKET
+  ======================================================= */
 
-    const requestCode = async () => {
-      if (finished || codeRequested) return;
-      if (sock.authState?.creds?.registered) return;
-      codeRequested = true;
+  const oldSocket =
+    global.allActiveSessions.get(
+      sessionId
+    );
 
-      try {
-        const code = await sock.requestPairingCode(cleanNumber);
-        if (!code) throw new Error("WhatsApp did not return a pairing code.");
-        finished = true;
-        clearTimeout(timeout);
-        resolve({ code, socket: sock });
-      } catch (error) {
-        finished = true;
-        clearTimeout(timeout);
-        reject(error);
-      }
-    };
+  if (oldSocket) {
+    console.log(
+      `♻️ [OLD SOCKET] Closing ${cleanNumber}`
+    );
 
-    sock.ev.on("connection.update", async (update) => {
-      if (finished) return;
-      const { connection, qr } = update;
-      if (connection === "connecting" || !!qr) {
-        await delay(1200);
-        await requestCode();
-      }
-    });
+    try {
+      oldSocket.ev.removeAllListeners(
+        "connection.update"
+      );
+    } catch {}
 
-    setTimeout(async () => {
-      if (!finished && !codeRequested) await requestCode();
-    }, 4000);
-  });
+    try {
+      oldSocket.end(
+        new Error(
+          "New pairing requested"
+        )
+      );
+    } catch {}
+
+    global.activeBotSockets.delete(
+      oldSocket
+    );
+
+    global.allActiveSessions.delete(
+      sessionId
+    );
+
+    /*
+     * Give Baileys time to close
+     * before creating another socket.
+     */
+    await delay(1000);
+  }
+
+  /*
+   * IMPORTANT:
+   *
+   * For a NEW pairing, old auth files can
+   * contain an incomplete/expired login.
+   *
+   * Remove only this user's local session.
+   */
+
+  try {
+    if (
+      fs.existsSync(sessionDir)
+    ) {
+      fs.rmSync(
+        sessionDir,
+        {
+          recursive: true,
+          force: true
+        }
+      );
+    }
+  } catch (error) {
+    console.error(
+      "⚠️ Session cleanup:",
+      error.message
+    );
+  }
+
+  fs.mkdirSync(
+    sessionDir,
+    {
+      recursive: true
+    }
+  );
+
+  /* =======================================================
+     CREATE FRESH SOCKET
+  ======================================================= */
+
+  console.log(
+    `📱 [PAIRING] Starting fresh socket for ${cleanNumber}`
+  );
+
+  const sock =
+    await createMultiSocket(
+      sessionId,
+      cleanNumber,
+      true
+    );
+
+  /*
+   * DO NOT wait for "qr".
+   *
+   * requestPairingCode() itself starts
+   * the pairing process.
+   */
+
+  console.log(
+    `⏳ [PAIRING] Waiting for WhatsApp connection...`
+  );
+
+  let code;
+
+  try {
+    /*
+     * Wait a little for socket initialization.
+     */
+    await delay(2500);
+
+    /*
+     * If socket is already closed,
+     * don't continue.
+     */
+    if (
+      sock.ws &&
+      sock.ws.readyState === 3
+    ) {
+      throw new Error(
+        "WhatsApp socket closed before pairing code request."
+      );
+    }
+
+    console.log(
+      `🔐 [PAIRING] Requesting code for ${cleanNumber}`
+    );
+
+    code =
+      await sock.requestPairingCode(
+        cleanNumber
+      );
+  } catch (error) {
+    console.error(
+      `❌ [PAIRING CODE ERROR] ${cleanNumber}:`,
+      error.message
+    );
+
+    try {
+      sock.end(
+        new Error(
+          "Pairing code request failed"
+        )
+      );
+    } catch {}
+
+    throw new Error(
+      "Unable to generate pairing code. Please try again."
+    );
+  }
+
+  if (!code) {
+    throw new Error(
+      "WhatsApp returned an empty pairing code."
+    );
+  }
+
+  /*
+   * Format:
+   * ABCD-EFGH
+   */
+
+  const formattedCode =
+    String(code).length === 8
+      ? `${String(code).slice(
+          0,
+          4
+        )}-${String(code).slice(4)}`
+      : String(code);
+
+  console.log(
+    `✅ [PAIRING CODE] ${cleanNumber}: ${formattedCode}`
+  );
+
+  return {
+    code: formattedCode,
+    socket: sock
+  };
 }
 
-// Dummy backward compatibility
+/* =========================================================
+   BACKWARD COMPATIBILITY
+========================================================= */
+
 async function startSavedSocket() {
   return null;
 }
-async function backupAllCredentials() {}
+
+async function backupAllCredentials() {
+  try {
+    const sessions =
+      await SessionModel.find({}).lean();
+
+    for (
+      const session of sessions
+    ) {
+      await backupSession(
+        session.sessionId,
+        session.phoneNumber
+      );
+    }
+  } catch {}
+}
+
+/* =========================================================
+   ACTIVE SOCKET
+========================================================= */
+
+function getActiveSocket() {
+  return (
+    global.activeBotSockets
+      .values()
+      .next()
+      .value || null
+  );
+}
+
+/* =========================================================
+   EXPORTS
+========================================================= */
 
 module.exports = {
   restoreCredentials,
+
   backupAllCredentials,
+
   requestPairCode,
+
   startSavedSocket,
-  onSocketCreated: (callback) => {
-    onSocketCreatedCallback = callback;
+
+  onSocketCreated: (
+    callback
+  ) => {
+    onSocketCreatedCallback =
+      callback;
   },
-  getActiveSocket: () => {
-    // Return primary or first active socket
-    return global.activeBotSockets.values().next().value || null;
-  }
+
+  getActiveSocket
 };
