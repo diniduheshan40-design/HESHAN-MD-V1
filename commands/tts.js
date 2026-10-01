@@ -6,8 +6,14 @@ const { execFile } = require("child_process");
 
 const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
 
+
+// ============================================================
+// RUN FFMPEG
+// ============================================================
+
 function runFFmpeg(args) {
   return new Promise((resolve, reject) => {
+
     execFile(
       ffmpegPath,
       args,
@@ -16,9 +22,18 @@ function runFFmpeg(args) {
         maxBuffer: 20 * 1024 * 1024
       },
       (error, stdout, stderr) => {
+
         if (error) {
-          console.error("[FFMPEG]", stderr);
-          return reject(error);
+          console.error("[FFMPEG ERROR]");
+          console.error(stderr);
+
+          return reject(
+            new Error(
+              stderr?.trim() ||
+              error.message ||
+              "FFmpeg error"
+            )
+          );
         }
 
         resolve({
@@ -30,45 +45,185 @@ function runFFmpeg(args) {
   });
 }
 
-async function getDuration(file) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      ffmpegPath,
-      [
-        "-i",
-        file
-      ],
-      {
-        windowsHide: true,
-        maxBuffer: 10 * 1024 * 1024
-      },
-      (error, stdout, stderr) => {
 
-        const output = `${stdout}\n${stderr}`;
+// ============================================================
+// GET AUDIO DURATION FROM PCM
+// 16-bit mono PCM @ 16000Hz
+// ============================================================
 
-        const match = output.match(
-          /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i
-        );
+function getPcmDuration(pcmBuffer) {
 
-        if (!match) {
-          return resolve(0);
-        }
+  const bytesPerSecond =
+    16000 * 1 * 2;
 
-        const hours = Number(match[1]);
-        const minutes = Number(match[2]);
-        const seconds = Number(match[3]);
-
-        resolve(
-          Math.ceil(
-            hours * 3600 +
-            minutes * 60 +
-            seconds
-          )
-        );
-      }
-    );
-  });
+  return Math.max(
+    1,
+    Math.ceil(
+      pcmBuffer.length /
+      bytesPerSecond
+    )
+  );
 }
+
+
+// ============================================================
+// CREATE WHATSAPP WAVEFORM
+// 64 BARS
+// ============================================================
+
+function createWaveform(pcmBuffer) {
+
+  const samples = 64;
+
+  const bytesPerSample = 2;
+
+  const totalSamples =
+    Math.floor(
+      pcmBuffer.length /
+      bytesPerSample
+    );
+
+  if (!totalSamples) {
+
+    return Buffer.from(
+      new Uint8Array(
+        samples
+      ).fill(50)
+    );
+  }
+
+  const blockSize =
+    Math.max(
+      1,
+      Math.floor(
+        totalSamples /
+        samples
+      )
+    );
+
+  const waveform =
+    new Uint8Array(samples);
+
+  let maxAmplitude = 1;
+
+  const amplitudes =
+    new Array(samples).fill(0);
+
+
+  // ==========================================================
+  // FIND RMS AMPLITUDE FOR EACH BLOCK
+  // ==========================================================
+
+  for (let i = 0; i < samples; i++) {
+
+    const start =
+      i * blockSize;
+
+    const end =
+      Math.min(
+        totalSamples,
+        start + blockSize
+      );
+
+    let sum = 0;
+    let count = 0;
+
+    for (
+      let sample = start;
+      sample < end;
+      sample++
+    ) {
+
+      const offset =
+        sample * bytesPerSample;
+
+      if (
+        offset + 1 >=
+        pcmBuffer.length
+      ) {
+        break;
+      }
+
+      const value =
+        pcmBuffer.readInt16LE(
+          offset
+        );
+
+      const normalized =
+        Math.abs(value) / 32768;
+
+      sum +=
+        normalized *
+        normalized;
+
+      count++;
+    }
+
+    if (count > 0) {
+
+      const rms =
+        Math.sqrt(
+          sum / count
+        );
+
+      amplitudes[i] =
+        rms;
+
+      if (
+        rms >
+        maxAmplitude
+      ) {
+        maxAmplitude =
+          rms;
+      }
+    }
+  }
+
+
+  // ==========================================================
+  // NORMALIZE 0 - 100
+  // ==========================================================
+
+  for (let i = 0; i < samples; i++) {
+
+    let value =
+      amplitudes[i] /
+      maxAmplitude;
+
+    // Make quiet voice parts visible
+    value =
+      Math.max(
+        0.12,
+        value
+      );
+
+    value =
+      Math.min(
+        1,
+        value
+      );
+
+    waveform[i] =
+      Math.max(
+        1,
+        Math.min(
+          100,
+          Math.round(
+            value * 100
+          )
+        )
+      );
+  }
+
+  return Buffer.from(
+    waveform
+  );
+}
+
+
+// ============================================================
+// MODULE
+// ============================================================
 
 module.exports = {
 
@@ -81,9 +236,11 @@ module.exports = {
     "girl"
   ],
 
-  desc: "Text to Speech WhatsApp Voice Note",
+  desc:
+    "Text to Speech Real WhatsApp Voice Note",
 
   category: "convert",
+
 
   async execute(
     sock,
@@ -95,14 +252,18 @@ module.exports = {
 
     let inputFile = null;
     let outputFile = null;
+    let pcmFile = null;
 
     try {
 
-      // ======================================================
-      // TEXT
-      // ======================================================
+      // ========================================================
+      // GET TEXT
+      // ========================================================
 
-      let text = args.join(" ").trim();
+      let text =
+        args
+          .join(" ")
+          .trim();
 
       const quoted =
         msg.message
@@ -110,7 +271,12 @@ module.exports = {
           ?.contextInfo
           ?.quotedMessage;
 
-      if (!text && quoted) {
+
+      // Reply to text message
+      if (
+        !text &&
+        quoted
+      ) {
 
         text =
           quoted.conversation ||
@@ -120,7 +286,15 @@ module.exports = {
           "";
       }
 
-      text = String(text).trim();
+
+      text =
+        String(text)
+          .trim();
+
+
+      // ========================================================
+      // NO TEXT
+      // ========================================================
 
       if (!text) {
 
@@ -128,10 +302,12 @@ module.exports = {
           chatJid,
           {
             text:
-              `🎙️ *TTS VOICE*\n\n` +
-              `හඬ බවට පත් කිරීමට text එකක් දෙන්න.\n\n` +
-              `*.tts කොහොමද ඔයාට*\n` +
-              `*.tts Hello cute girl*`
+              `🎙️ *TTS VOICE NOTE*\n\n` +
+              `හඬ බවට පත් කරන්න text එකක් දෙන්න.\n\n` +
+              `*Examples:*\n` +
+              `.tts කොහොමද ඔයාට\n` +
+              `.tts මට ඔයාව මතක් වෙනවා\n` +
+              `.tts Hello cute girl`
           },
           {
             quoted: msg
@@ -139,9 +315,10 @@ module.exports = {
         );
       }
 
-      // ======================================================
-      // REACTION
-      // ======================================================
+
+      // ========================================================
+      // PROCESS REACTION
+      // ========================================================
 
       await sock.sendMessage(
         chatJid,
@@ -153,14 +330,23 @@ module.exports = {
         }
       );
 
-      // ======================================================
-      // TTS API
-      // ======================================================
+
+      // ========================================================
+      // LANGUAGE DETECTION
+      // ========================================================
 
       const hasSinhala =
-        /[\u0D80-\u0DFF]/.test(text);
+        /[\u0D80-\u0DFF]/.test(
+          text
+        );
+
 
       let audioUrl;
+
+
+      // ========================================================
+      // SINHALA
+      // ========================================================
 
       if (hasSinhala) {
 
@@ -170,53 +356,91 @@ module.exports = {
           "&client=tw-ob" +
           "&tl=si" +
           "&q=" +
-          encodeURIComponent(text);
+          encodeURIComponent(
+            text
+          );
 
-      } else {
+      }
+
+      // ========================================================
+      // ENGLISH
+      // ========================================================
+
+      else {
 
         audioUrl =
           "https://api.streamelements.com/kappa/v2/speech" +
           "?voice=Salli" +
           "&text=" +
-          encodeURIComponent(text);
+          encodeURIComponent(
+            text
+          );
       }
 
+
       console.log(
-        "[TTS] Request:",
+        "[TTS] Language:",
+        hasSinhala
+          ? "Sinhala"
+          : "English"
+      );
+
+      console.log(
+        "[TTS] Text:",
         text
       );
 
-      // ======================================================
-      // DOWNLOAD
-      // ======================================================
+
+      // ========================================================
+      // DOWNLOAD TTS
+      // ========================================================
 
       const response =
         await axios.get(
           audioUrl,
           {
-            responseType: "arraybuffer",
+            responseType:
+              "arraybuffer",
 
-            timeout: 30000,
+            timeout:
+              30000,
 
             headers: {
               "User-Agent":
-                "Mozilla/5.0"
+                "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36",
+
+              "Accept":
+                "audio/mpeg,audio/*,*/*"
             }
           }
         );
 
-      const inputBuffer =
-        Buffer.from(response.data);
 
-      if (!inputBuffer.length) {
+      const inputBuffer =
+        Buffer.from(
+          response.data
+        );
+
+
+      if (
+        !inputBuffer.length
+      ) {
         throw new Error(
-          "TTS returned empty audio"
+          "TTS server returned empty audio"
         );
       }
 
-      // ======================================================
-      // TEMP FILE
-      // ======================================================
+
+      console.log(
+        "[TTS] Downloaded:",
+        inputBuffer.length,
+        "bytes"
+      );
+
+
+      // ========================================================
+      // TEMP FILES
+      // ========================================================
 
       const id =
         Date.now() +
@@ -225,25 +449,43 @@ module.exports = {
           .toString(36)
           .substring(2, 8);
 
-      inputFile = path.join(
-        os.tmpdir(),
-        `tts_${id}.mp3`
-      );
 
-      outputFile = path.join(
-        os.tmpdir(),
-        `voice_${id}.ogg`
-      );
+      inputFile =
+        path.join(
+          os.tmpdir(),
+          `darkdinu_tts_${id}.input`
+        );
+
+
+      outputFile =
+        path.join(
+          os.tmpdir(),
+          `darkdinu_tts_${id}.ogg`
+        );
+
+
+      pcmFile =
+        path.join(
+          os.tmpdir(),
+          `darkdinu_tts_${id}.pcm`
+        );
+
 
       fs.writeFileSync(
         inputFile,
         inputBuffer
       );
 
-      // ======================================================
-      // IMPORTANT
-      // WHATSAPP PTT OGG / OPUS
-      // ======================================================
+
+      // ========================================================
+      // STEP 1
+      // CREATE REAL OGG / OPUS
+      // ========================================================
+
+      console.log(
+        "[TTS] Creating OGG/Opus..."
+      );
+
 
       await runFFmpeg([
         "-y",
@@ -262,13 +504,13 @@ module.exports = {
         "-c:a",
         "libopus",
 
-        // WhatsApp voice
-        "-ar",
-        "16000",
-
         // MONO
         "-ac",
         "1",
+
+        // Standard audio rate
+        "-ar",
+        "48000",
 
         // Voice bitrate
         "-b:a",
@@ -278,17 +520,15 @@ module.exports = {
         "-application",
         "voip",
 
-        // Better WhatsApp compatibility
+        // Good Opus compression
         "-compression_level",
         "10",
 
+        // Frame
         "-frame_duration",
-        "60",
+        "20",
 
-        "-packet_loss",
-        "0",
-
-        // Fix timestamp
+        // Timestamp
         "-avoid_negative_ts",
         "make_zero",
 
@@ -296,55 +536,157 @@ module.exports = {
         "-map_metadata",
         "-1",
 
-        // OGG container
+        // OGG
         "-f",
         "ogg",
 
         outputFile
       ]);
 
-      // ======================================================
-      // CHECK FILE
-      // ======================================================
 
-      if (!fs.existsSync(outputFile)) {
+      // ========================================================
+      // CHECK OGG
+      // ========================================================
+
+      if (
+        !fs.existsSync(
+          outputFile
+        )
+      ) {
         throw new Error(
-          "OGG file was not created"
+          "FFmpeg did not create OGG file"
         );
       }
+
 
       const voiceBuffer =
-        fs.readFileSync(outputFile);
+        fs.readFileSync(
+          outputFile
+        );
 
-      if (voiceBuffer.length < 1000) {
+
+      if (
+        voiceBuffer.length <
+        1000
+      ) {
         throw new Error(
-          "Generated voice file is invalid"
+          "Generated OGG file is too small"
         );
       }
+
 
       // OGG signature
       const header =
         voiceBuffer
-          .subarray(0, 4)
+          .subarray(
+            0,
+            4
+          )
           .toString();
 
-      if (header !== "OggS") {
+
+      if (
+        header !==
+        "OggS"
+      ) {
 
         throw new Error(
-          "Generated audio is not a valid OGG file"
+          "Generated file is not valid OGG"
         );
       }
 
-      // ======================================================
-      // DURATION
-      // ======================================================
 
-      let seconds =
-        await getDuration(outputFile);
+      console.log(
+        "[TTS] Valid OGG:",
+        voiceBuffer.length,
+        "bytes"
+      );
 
-      if (!seconds || seconds < 1) {
-        seconds = 1;
+
+      // ========================================================
+      // STEP 2
+      // DECODE AUDIO TO RAW PCM
+      //
+      // This is ONLY for waveform generation.
+      // The actual WhatsApp audio remains OGG/Opus.
+      // ========================================================
+
+      console.log(
+        "[TTS] Generating waveform..."
+      );
+
+
+      await runFFmpeg([
+        "-y",
+
+        "-hide_banner",
+
+        "-loglevel",
+        "error",
+
+        "-i",
+        outputFile,
+
+        "-vn",
+
+        "-ac",
+        "1",
+
+        "-ar",
+        "16000",
+
+        "-f",
+        "s16le",
+
+        pcmFile
+      ]);
+
+
+      if (
+        !fs.existsSync(
+          pcmFile
+        )
+      ) {
+        throw new Error(
+          "PCM waveform file was not created"
+        );
       }
+
+
+      const pcmBuffer =
+        fs.readFileSync(
+          pcmFile
+        );
+
+
+      if (
+        !pcmBuffer.length
+      ) {
+        throw new Error(
+          "PCM audio is empty"
+        );
+      }
+
+
+      // ========================================================
+      // DURATION
+      // ========================================================
+
+      const seconds =
+        getPcmDuration(
+          pcmBuffer
+        );
+
+
+      // ========================================================
+      // WAVEFORM
+      // ========================================================
+
+      const waveform =
+        createWaveform(
+          pcmBuffer
+        );
+
 
       console.log(
         "[TTS] Duration:",
@@ -352,37 +694,50 @@ module.exports = {
         "seconds"
       );
 
+
       console.log(
-        "[TTS] OGG:",
-        voiceBuffer.length,
-        "bytes"
+        "[TTS] Waveform:",
+        waveform.length,
+        "bars"
       );
 
-      // ======================================================
-      // SEND WHATSAPP PTT
-      // ======================================================
+
+      // ========================================================
+      // STEP 3
+      // SEND REAL WHATSAPP PTT
+      // ========================================================
 
       await sock.sendMessage(
         chatJid,
         {
-          audio: voiceBuffer,
+          audio:
+            voiceBuffer,
 
           mimetype:
             "audio/ogg; codecs=opus",
 
-          ptt: true,
+          // ⭐ REAL VOICE NOTE
+          ptt:
+            true,
 
-          // Current Baileys supports this
-          seconds: seconds
+          // ⭐ AUDIO DURATION
+          seconds:
+            seconds,
+
+          // ⭐ 64 WAVEFORM BARS
+          waveform:
+            waveform
         },
         {
-          quoted: msg
+          quoted:
+            msg
         }
       );
 
-      // ======================================================
+
+      // ========================================================
       // SUCCESS
-      // ======================================================
+      // ========================================================
 
       await sock.sendMessage(
         chatJid,
@@ -394,16 +749,30 @@ module.exports = {
         }
       );
 
+
       console.log(
-        "[TTS] Voice sent successfully"
+        "[TTS] ============================="
       );
+
+      console.log(
+        "[TTS] VOICE NOTE SENT"
+      );
+
+      console.log(
+        "[TTS] ============================="
+      );
+
 
     } catch (error) {
 
       console.error(
-        "[TTS ERROR]",
+        "[DARK DINU TTS ERROR]"
+      );
+
+      console.error(
         error
       );
+
 
       try {
 
@@ -411,46 +780,72 @@ module.exports = {
           chatJid,
           {
             text:
-              `❌ *TTS Error*\n\n` +
-              `${error.message}`
+              `❌ *TTS Voice Error*\n\n` +
+              `${error.message || "Unknown error"}`
           },
           {
-            quoted: msg
+            quoted:
+              msg
           }
         );
 
-      } catch (e) {
+      } catch (sendError) {
 
         console.error(
-          "[TTS SEND ERROR]",
-          e.message
+          "[TTS ERROR MESSAGE]",
+          sendError.message
         );
       }
 
     } finally {
 
-      // ======================================================
-      // CLEAN
-      // ======================================================
+      // ========================================================
+      // DELETE TEMP FILES
+      // ========================================================
 
       try {
 
         if (
           inputFile &&
-          fs.existsSync(inputFile)
+          fs.existsSync(
+            inputFile
+          )
         ) {
-          fs.unlinkSync(inputFile);
+          fs.unlinkSync(
+            inputFile
+          );
         }
 
       } catch (e) {}
+
 
       try {
 
         if (
           outputFile &&
-          fs.existsSync(outputFile)
+          fs.existsSync(
+            outputFile
+          )
         ) {
-          fs.unlinkSync(outputFile);
+          fs.unlinkSync(
+            outputFile
+          );
+        }
+
+      } catch (e) {}
+
+
+      try {
+
+        if (
+          pcmFile &&
+          fs.existsSync(
+            pcmFile
+          )
+        ) {
+          fs.unlinkSync(
+            pcmFile
+          );
         }
 
       } catch (e) {}
