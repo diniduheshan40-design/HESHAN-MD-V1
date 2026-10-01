@@ -20,9 +20,46 @@ const express = require("express");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const http = require("http");
 const https = require("https");
 const axios = require("axios");
+const { exec } = require("child_process");
+
+// FFmpeg Path Setup
+let ffmpegPath = "ffmpeg";
+try {
+  const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
+  ffmpegPath = ffmpegInstaller.path;
+} catch (e) {
+  ffmpegPath = "ffmpeg";
+}
+
+// WhatsApp Playable Voice Note Converter Helper
+function convertToWhatsAppVoice(inputBuffer) {
+  return new Promise((resolve, reject) => {
+    const tempId = Date.now() + "_" + Math.random().toString(36).substring(7);
+    const tempIn = path.join(os.tmpdir(), `tt_in_${tempId}.mp3`);
+    const tempOut = path.join(os.tmpdir(), `tt_out_${tempId}.ogg`);
+
+    fs.writeFileSync(tempIn, inputBuffer);
+
+    const cmd = `"${ffmpegPath}" -y -i "${tempIn}" -c:a libopus -b:a 64k -ar 48000 -ac 1 -avoid_negative_ts make_zero "${tempOut}"`;
+
+    exec(cmd, (err) => {
+      try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (e) {}
+      if (err) return reject(err);
+
+      try {
+        const outBuf = fs.readFileSync(tempOut);
+        try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (e) {}
+        resolve(outBuf);
+      } catch (readErr) {
+        reject(readErr);
+      }
+    });
+  });
+}
 
 // ==========================================
 // AUTH IMPORT
@@ -300,7 +337,10 @@ function initBot(sock) {
             } else if (cleanBody === "2") {
               await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
             } else if (cleanBody === "3") {
-              await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
+              // Song PTT conversion
+              const songRes = await axios.get(session.url, { responseType: "arraybuffer", timeout: 45000 });
+              const voiceBuf = await convertToWhatsAppVoice(Buffer.from(songRes.data));
+              await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
             }
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
             return;
@@ -311,27 +351,58 @@ function initBot(sock) {
         }
       }
 
-      // TikTok Handler
+      // ============================================================
+      // TIKTOK 1, 2, 3 INTERACTIVE SELECTION HANDLER
+      // ============================================================
       if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
         const ttSession = global.tiktokSessions.get(quotedMsgId);
         if (["1", "2", "3"].includes(cleanBody)) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
+            // [1] HD Video Download
             if (cleanBody === "1") {
-              const videoUrl = ttSession.hdVideo || ttSession.videoUrl;
-              await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ HD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
-            } else if (cleanBody === "2") {
-              const videoUrl = ttSession.sdVideo || ttSession.videoUrl;
-              await sock.sendMessage(from, { video: { url: videoUrl }, caption: `🎬 *${ttSession.title}*\n⚡ SD Quality\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, mimetype: "video/mp4" }, { quoted: msg });
-            } else if (cleanBody === "3") {
-              if (ttSession.audioUrl) {
-                await sock.sendMessage(from, { audio: { url: ttSession.audioUrl }, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
-              }
+              const videoUrl = ttSession.hdVideo || ttSession.sdVideo;
+              if (!videoUrl) throw new Error("HD Video Link හමු නොවීය.");
+              await sock.sendMessage(from, { 
+                video: { url: videoUrl }, 
+                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
+                mimetype: "video/mp4" 
+              }, { quoted: msg });
+            } 
+            // [2] SD Video Download
+            else if (cleanBody === "2") {
+              const videoUrl = ttSession.sdVideo || ttSession.hdVideo;
+              if (!videoUrl) throw new Error("SD Video Link හමු නොවීය.");
+              await sock.sendMessage(from, { 
+                video: { url: videoUrl }, 
+                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
+                mimetype: "video/mp4" 
+              }, { quoted: msg });
+            } 
+            // [3] Real WhatsApp Playable Voice Note (PTT)
+            else if (cleanBody === "3") {
+              if (!ttSession.audioUrl) throw new Error("Audio Link හමු නොවීය.");
+
+              const rawAudioRes = await axios.get(ttSession.audioUrl, {
+                responseType: "arraybuffer",
+                timeout: 30000,
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+              });
+
+              const voiceBuffer = await convertToWhatsAppVoice(Buffer.from(rawAudioRes.data));
+
+              await sock.sendMessage(from, {
+                audio: voiceBuffer,
+                mimetype: "audio/ogg; codecs=opus",
+                ptt: true
+              }, { quoted: msg });
             }
+
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
             return;
           } catch (e) {
-            await reply("❌ TikTok බාගත කිරීමේ දෝෂයක් මතු විය.");
+            console.error("TikTok download error:", e);
+            await reply(`❌ TikTok බාගත කිරීමේ දෝෂයක් මතු විය: ${e.message}`);
             return;
           }
         }
