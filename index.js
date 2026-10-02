@@ -239,20 +239,14 @@ function initBot(sock) {
     const { connection } = update;
 
     if (connection === "open") {
-      console.log("\x1b[32m%s\x1b[0m", `🎉 [DARK DINU] WhatsApp Connected: +${sock.user?.id?.split(":")[0]}`);
-
-      if (sock.presenceInterval) clearInterval(sock.presenceInterval);
-      sock.presenceInterval = setInterval(async () => {
-        try {
-          await sock.sendPresenceUpdate("available");
-        } catch (e) {}
-      }, 15000);
+      const currentBotNum = sock.user?.id?.split(":")[0]?.replace(/[^0-9]/g, "");
+      console.log("\x1b[32m%s\x1b[0m", `🎉 [DARK DINU] WhatsApp Connected: +${currentBotNum}`);
 
       setTimeout(async () => {
         try {
           if (!sock.user) return;
 
-          const rawUser = (sock.user.id || "").split(":")[0].replace(/[^0-9]/g, "");
+          const rawUser = currentBotNum;
           const userJid = `${rawUser}@s.whatsapp.net`;
           const devJid = `${DEVELOPER_NUMBER}@s.whatsapp.net`;
 
@@ -261,6 +255,7 @@ function initBot(sock) {
           const activeName = settings?.botName || "DARK DINU MD";
           const activePrefix = settings?.prefix || ".";
 
+          // Alert එක යවන්නේ ඇත්තටම අලුතෙන්ම pair වුණ වෙලාවේ විතරයි (Reconnection වලදී spammed වෙන්නේ නෑ)
           const checkMeta = await BotMeta.findOne({ key: `paired_${rawUser}` });
           if (!checkMeta || !checkMeta.value) {
             const userCaption = 
@@ -309,10 +304,6 @@ function initBot(sock) {
           console.error("⚠️ Connection message error:", err.message);
         }
       }, 2500);
-    }
-
-    if (connection === "close") {
-      if (sock.presenceInterval) clearInterval(sock.presenceInterval);
     }
   });
 
@@ -397,7 +388,7 @@ function initBot(sock) {
           const senderNum = (cached.sender || "").split("@")[0].replace(/[^0-9]/g, "");
 
           const alertHeader = 
-`╭───『 🗑️ 𝐀𝐍𝐓𝐈-𝐃𝐄𝐋𝐄𝐓𝐄 𝐀𝐋𝐄𝐑𝐓 』───◆
+`╭───『 🗑️️ 𝐀𝐍𝐓𝐈-𝐃𝐄𝐋𝐄𝐓𝐄 𝐀𝐋𝐄𝐑𝐓 』───◆
 │
 │ 👤 *Sender:* +${senderNum} (${cached.pushName})
 │ 💬 *Chat:* ${cached.from.endsWith("@g.us") ? "Group Chat" : "Private Chat"}
@@ -541,7 +532,6 @@ function initBot(sock) {
       } else {
         try {
           await sock.sendPresenceUpdate("paused", from);
-          await sock.sendPresenceUpdate("available");
         } catch (e) {}
       }
 
@@ -747,7 +737,7 @@ function initBot(sock) {
             const audioStream = await axios.get(targetAudio, {
               responseType: "arraybuffer",
               timeout: 25000,
-              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+              headers: { "User-Agent": "Mozilla/5.0" }
             });
 
             const voiceBuf = await convertToWhatsAppVoice(Buffer.from(audioStream.data));
