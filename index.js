@@ -1,6 +1,5 @@
 require("dotenv").config();
 
-// Max listeners warning fix for 100+ bots
 process.setMaxListeners(0);
 
 process.on("uncaughtException", (err) => {
@@ -98,12 +97,12 @@ const BotSettingsSchema = new mongoose.Schema(
     botName: { type: String, default: "DARK DINU MD" },
     botLogo: { type: String, default: "https://files.catbox.moe/3fxa4u.jpeg" },
     prefix: { type: String, default: "." },
-    workMode: { type: String, default: "public" }, // "public", "private", "inbox", "groups"
-    presence: { type: String, default: "off" },    // "off", "typing", "recording"
+    workMode: { type: String, default: "public" },
+    presence: { type: String, default: "off" },
     statusSeen: { type: Boolean, default: true },
-    statusReact: { type: String, default: "💚" },  // "off" or emoji
-    antiViewRoute: { type: String, default: "me" }, // "me", "from"
-    antiDeleteRoute: { type: String, default: "me" } // "me", "from"
+    statusReact: { type: String, default: "💚" },
+    antiViewRoute: { type: String, default: "me" },
+    antiDeleteRoute: { type: String, default: "me" }
   },
   { timestamps: true }
 );
@@ -138,10 +137,8 @@ if (!fs.existsSync(commandsDir)) {
   fs.mkdirSync(commandsDir, { recursive: true });
 }
 
-let activeSocket = null;
 let pairingInProgress = false;
 
-// Global Memory Caches (Anti-delete message memory & sessions)
 if (!global.msgStore) global.msgStore = new Map();
 if (!global.songSessions) global.songSessions = new Map();
 if (!global.tiktokSessions) global.tiktokSessions = new Map();
@@ -187,7 +184,6 @@ function loadCommands() {
           if (Array.isArray(cmd.alias)) {
             cmd.alias.forEach(a => aliases.set(a.toLowerCase().trim(), name));
           }
-          console.log(`\x1b[32m%s\x1b[0m`, `   ├ ⚡ Registered: .${name}`);
         }
       } catch (err) {
         console.error(`\x1b[31m%s\x1b[0m`, `   ❌ Error reading ${file}: ${err.message}`);
@@ -231,7 +227,11 @@ function extractMessageBody(msg) {
 
 function initBot(sock) {
   if (!sock || !sock.ev) return;
-  activeSocket = sock;
+  
+  // වැදගත්: එක Socket එකකට Listener දෙපාරක් වැටීම වැළැක්වීම
+  if (sock._isInitialized) return;
+  sock._isInitialized = true;
+
   if (global.activeBotSockets) {
     global.activeBotSockets.add(sock);
   }
@@ -240,7 +240,7 @@ function initBot(sock) {
     const { connection } = update;
 
     if (connection === "open") {
-      console.log("\x1b[32m%s\x1b[0m", "🎉 [DARK DINU] WhatsApp Connected Successfully!");
+      console.log("\x1b[32m%s\x1b[0m", `🎉 [DARK DINU] WhatsApp Connected: +${sock.user?.id?.split(":")[0]}`);
 
       if (sock.presenceInterval) clearInterval(sock.presenceInterval);
       sock.presenceInterval = setInterval(async () => {
@@ -262,7 +262,9 @@ function initBot(sock) {
           const activeName = settings?.botName || "DARK DINU MD";
           const activePrefix = settings?.prefix || ".";
 
-          const userCaption = 
+          const checkMeta = await BotMeta.findOne({ key: `paired_${rawUser}` });
+          if (!checkMeta || !checkMeta.value) {
+            const userCaption = 
 `╭───『 ${activeName} 』───◆
 │
 │ 🩸 *STATUS:* Connected Successfully!
@@ -270,23 +272,17 @@ function initBot(sock) {
 │ 🌐 *WORK MODE:* ${(settings?.workMode || "public").toUpperCase()}
 │ 👤 *USER:* +${rawUser}
 │ 👑 *DEVELOPER:* ${DEVELOPER_NAME}
-│ 📞 *DEV CONTACT:* +${DEVELOPER_NUMBER}
-│ 🌐 *ENGINE:* Baileys 24/7 Multi-Device
+│ 🌐 *ENGINE:* Baileys 24/7 Engine
 │
 ╰───────────────────────◆
 > *DARK DINU is active! Type ${activePrefix}setting to configure.* 🔥`;
 
-          try {
-            await sock.sendMessage(userJid, {
-              image: { url: activeLogo },
-              caption: userCaption
-            });
-          } catch (e) {
-            await sock.sendMessage(userJid, { text: userCaption });
-          }
+            try {
+              await sock.sendMessage(userJid, { image: { url: activeLogo }, caption: userCaption });
+            } catch (e) {
+              await sock.sendMessage(userJid, { text: userCaption });
+            }
 
-          const checkMeta = await BotMeta.findOne({ key: `paired_${rawUser}` });
-          if (!checkMeta || !checkMeta.value) {
             const devCaption = 
 `╭───『 🚨 NEW PAIR ALERT 』───◆
 │
@@ -299,10 +295,7 @@ function initBot(sock) {
 ╰──────────────────────────◆`;
 
             try {
-              await sock.sendMessage(devJid, {
-                image: { url: activeLogo },
-                caption: devCaption
-              });
+              await sock.sendMessage(devJid, { image: { url: activeLogo }, caption: devCaption });
             } catch (e) {
               await sock.sendMessage(devJid, { text: devCaption });
             }
@@ -314,7 +307,7 @@ function initBot(sock) {
             );
           }
         } catch (err) {
-          console.error("⚠️️ Connection message error:", err.message);
+          console.error("⚠️ Connection message error:", err.message);
         }
       }, 2500);
     }
@@ -361,12 +354,25 @@ function initBot(sock) {
 
       const isOwner = Boolean(isDev || isBotOwner);
 
+      // 🛑 LOOP FIX 1: බොට් තමන් විසින්ම යවන මැසේජ් වලින් ආයෙත් Commands Run වීම නැවැත්වීම
+      if (msg.key.fromMe && !cleanBody.startsWith(settings?.prefix || ".")) {
+        return;
+      }
+
+      // 🛑 LOOP FIX 2: Inbox එකකදී අදාළ බොටා හැර අනිත් බොට්ලා reply කිරීම නැවැත්වීම
+      if (!isGroup && !isOwner && !isDev) {
+        const chatReceiver = from.replace(/[^0-9]/g, "");
+        if (chatReceiver !== currentBotNumber && !msg.key.fromMe) {
+          return;
+        }
+      }
+
       const reply = async (text) => {
         return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
       };
 
       /* =========================================================
-         1. ANTI-DELETE STORE CACHING (Save recent messages)
+         1. ANTI-DELETE CACHING & DETECTION
       ========================================================= */
       if (msg.key.id && !msg.key.fromMe) {
         global.msgStore.set(msg.key.id, {
@@ -383,11 +389,8 @@ function initBot(sock) {
         }
       }
 
-      /* =========================================================
-         2. ANTI-DELETE DETECTION (Protocol Revoke - FIXED)
-      ========================================================= */
       const protocolMsg = msg.message?.protocolMessage;
-      if (protocolMsg && protocolMsg.type === 0) { // 0 = Revoke / Delete
+      if (protocolMsg && protocolMsg.type === 0) {
         const deletedId = protocolMsg.key?.id;
         if (deletedId && global.msgStore.has(deletedId)) {
           const cached = global.msgStore.get(deletedId);
@@ -422,16 +425,10 @@ function initBot(sock) {
               });
             } else if (rawDeletedMsg.imageMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
-              await sock.sendMessage(targetSendJid, {
-                image: buffer,
-                caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}`
-              });
+              await sock.sendMessage(targetSendJid, { image: buffer, caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}` });
             } else if (rawDeletedMsg.videoMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
-              await sock.sendMessage(targetSendJid, {
-                video: buffer,
-                caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}`
-              });
+              await sock.sendMessage(targetSendJid, { video: buffer, caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}` });
             } else if (rawDeletedMsg.audioMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
               await sock.sendMessage(targetSendJid, { text: alertHeader });
@@ -444,25 +441,18 @@ function initBot(sock) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
               await sock.sendMessage(targetSendJid, { text: alertHeader });
               await sock.sendMessage(targetSendJid, { sticker: buffer });
-            } else {
-              await sock.sendMessage(targetSendJid, {
-                text: `${alertHeader}\n\n📝 *Content:*\n${deletedText || "_Unsupported Media_"}`
-              });
             }
-          } catch (delErr) {
-            console.error("Anti-delete send error:", delErr.message);
-          }
+          } catch (delErr) {}
           return;
         }
       }
 
       /* =========================================================
-         3. ANTI-VIEWONCE HANDLER & EMOJI REPLY TRIGGER
+         2. ANTI-VIEWONCE & EMOJI TRIGGER
       ========================================================= */
-      const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤️", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
+      const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤️️", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
       const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       const isEmojiReplyVO = quotedMsg && antiViewEmojis.includes(cleanBody) && (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage);
-
       const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage || (isEmojiReplyVO ? (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage) : null);
 
       if (viewOnce && (!msg.key.fromMe || isEmojiReplyVO)) {
@@ -503,13 +493,11 @@ function initBot(sock) {
             }
             if (isEmojiReplyVO) return;
           }
-        } catch (voErr) {
-          console.error("Anti-ViewOnce error:", voErr.message);
-        }
+        } catch (voErr) {}
       }
 
       /* =========================================================
-         4. STATUS BROADCAST HANDLER (Auto Read & React)
+         3. AUTO STATUS READ & REACT
       ========================================================= */
       if (from === "status@broadcast") {
         try {
@@ -530,7 +518,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         5. WORK MODE PROTECTION
+         4. WORK MODE PROTECTION
       ========================================================= */
       if (!isOwner) {
         if (settings.workMode === "private") return;
@@ -539,7 +527,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. FAKE PRESENCE (Auto Typing / Recording & Clean Paused)
+         5. FAKE PRESENCE
       ========================================================= */
       if (settings.presence === "typing") {
         try {
@@ -560,7 +548,7 @@ function initBot(sock) {
 
       // Settings Reply Handler
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
-      if (quotedMsgId && global.settingSessions.has(quotedMsgId) && isOwner) {
+      if (quotedMsgId && global.settingSessions.has(quotedMsgId) && (isOwner || isDev)) {
         const settingCmd = getCommand("setting");
         if (settingCmd && typeof settingCmd.execute === "function") {
           return await settingCmd.execute(sock, msg, [], from, {
@@ -569,212 +557,10 @@ function initBot(sock) {
         }
       }
 
-      // Song Handler
-      if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
-        const session = global.songSessions.get(quotedMsgId);
-        if (["1", "2", "3"].includes(cleanBody)) {
-          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-          try {
-            if (cleanBody === "1") {
-              await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/mp4", fileName: `${session.title}.mp3` }, { quoted: msg });
-            } else if (cleanBody === "2") {
-              await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
-            } else if (cleanBody === "3") {
-              const songRes = await axios.get(session.url, { responseType: "arraybuffer", timeout: 45000 });
-              const voiceBuf = await convertToWhatsAppVoice(Buffer.from(songRes.data));
-              await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
-            }
-            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            return;
-          } catch (e) {
-            await reply("❌ Audio එක යැවීමේදී දෝෂයක් මතු විය.");
-            return;
-          }
-        }
-      }
-
-      // TikTok Handler
-      if (quotedMsgId && global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
-        const ttSession = global.tiktokSessions.get(quotedMsgId);
-        if (["1", "2", "3"].includes(cleanBody)) {
-          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-          try {
-            if (cleanBody === "1") {
-              const videoUrl = ttSession.hdVideo || ttSession.sdVideo;
-              if (!videoUrl) throw new Error("HD Video Link හමු නොවීය.");
-              await sock.sendMessage(from, { 
-                video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *${settings.botName} 🐦‍🔥*`, 
-                mimetype: "video/mp4" 
-              }, { quoted: msg });
-            } else if (cleanBody === "2") {
-              const videoUrl = ttSession.sdVideo || ttSession.hdVideo;
-              if (!videoUrl) throw new Error("SD Video Link හමු නොවීය.");
-              await sock.sendMessage(from, { 
-                video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *${settings.botName} 🐦‍🔥*`, 
-                mimetype: "video/mp4" 
-              }, { quoted: msg });
-            } else if (cleanBody === "3") {
-              if (!ttSession.audioUrl) throw new Error("Audio Link හමු නොවීය.");
-
-              const rawAudioRes = await axios.get(ttSession.audioUrl, {
-                responseType: "arraybuffer",
-                timeout: 30000,
-                headers: { "User-Agent": "Mozilla/5.0" }
-              });
-
-              const voiceBuffer = await convertToWhatsAppVoice(Buffer.from(rawAudioRes.data));
-
-              await sock.sendMessage(from, {
-                audio: voiceBuffer,
-                mimetype: "audio/ogg; codecs=opus",
-                ptt: true
-              }, { quoted: msg });
-            }
-
-            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            return;
-          } catch (e) {
-            console.error("TikTok download error:", e);
-            await reply(`❌ TikTok බාගත කිරීමේ දෝෂයක් මතු විය: ${e.message}`);
-            return;
-          }
-        }
-      }
-
-      // Facebook Handler
-      if (quotedMsgId && global.fbSessions && global.fbSessions.has(quotedMsgId)) {
-        const fbSession = global.fbSessions.get(quotedMsgId);
-        if (["1", "2", "3"].includes(cleanBody)) {
-          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-          try {
-            if (cleanBody === "1") {
-              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍‍🔥*` }, { quoted: msg });
-            } else if (cleanBody === "2") {
-              await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍‍🔥*` }, { quoted: msg });
-            } else if (cleanBody === "3") {
-              await sock.sendMessage(from, { audio: { url: fbSession.audio || fbSession.sd }, mimetype: "audio/mp4", fileName: "audio.mp3" }, { quoted: msg });
-            }
-            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            return;
-          } catch (e) {
-            await reply("❌ FB Media යැවීමේදී දෝෂයක් මතු විය.");
-            return;
-          }
-        }
-      }
-
-      // YouTube Video Selection Handler
-      if (quotedMsgId && global.videoSessions && global.videoSessions.has(quotedMsgId)) {
-        const vSession = global.videoSessions.get(quotedMsgId);
-        const qualityMap = { "1": "1080p", "2": "720p", "3": "480p", "4": "360p" };
-
-        if (qualityMap[cleanBody]) {
-          const selectedQuality = qualityMap[cleanBody];
-          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-          try {
-            const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
-            const downloadApi = `https://api.chamindu.site/api/v1/youtube/download?url=${encodeURIComponent(vSession.url)}&quality=${selectedQuality}&format=mp4&api_key=${apiKey}`;
-
-            const qRes = await axios.get(downloadApi, { timeout: 45000 });
-            const qData = qRes.data?.data || qRes.data;
-            const finalDownloadUrl = qData?.download_url || qData?.direct_url;
-
-            if (finalDownloadUrl) {
-              await sock.sendMessage(from, {
-                video: { url: finalDownloadUrl },
-                caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *${settings.botName} 🐦‍🔥*`,
-                mimetype: "video/mp4"
-              }, { quoted: msg });
-              await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-              global.videoSessions.delete(quotedMsgId);
-              return;
-            }
-          } catch (e) {
-            await reply("❌ වීඩියෝව ලබාගත නොහැකි විය.");
-            return;
-          }
-        }
-      }
-
-      // Emoji Voice Reaction System
-      if (global.evoiceEnabled === undefined) {
-        try {
-          const evData = await BotMeta.findOne({ key: "evoice_status" });
-          global.evoiceEnabled = evData ? Boolean(evData.value) : false;
-        } catch (e) {
-          global.evoiceEnabled = false;
-        }
-      }
-
-      const defaultPrefixes = [".", "!", "#", "/", "*", ","];
-      const isCmdStart = defaultPrefixes.some(p => cleanBody.startsWith(p)) || (settings.prefix && cleanBody.startsWith(settings.prefix));
-
-      if (global.evoiceEnabled && cleanBody && !isCmdStart) {
-        const emojiVoiceMap = {
-          "🙏": "https://files.catbox.moe/1e2359.opus",
-          "☸": "https://files.catbox.moe/1e2359.opus",
-          "🌹": "https://files.catbox.moe/uxm1re.opus",
-          "💆‍♂": "https://files.catbox.moe/uxm1re.opus",
-          "😅": "https://files.catbox.moe/cvv435.opus",
-          "🤣": "https://files.catbox.moe/cvv435.opus",
-          "😂": "https://files.catbox.moe/cvv435.opus",
-          "🫢": "https://files.catbox.moe/i2uw0g.opus",
-          "🌚": "https://files.catbox.moe/i2uw0g.opus",
-          "💇‍♂": "https://files.catbox.moe/i2uw0g.opus",
-          "🫣": "https://files.catbox.moe/oqfsdl.opus",
-          "🤪": "https://files.catbox.moe/oqfsdl.opus",
-          "😜": "https://files.catbox.moe/oqfsdl.opus",
-          "🥵": "https://files.catbox.moe/bfwnvj.opus",
-          "🤤": "https://files.catbox.moe/bfwnvj.opus",
-          "🍑": "https://files.catbox.moe/bfwnvj.opus",
-          "🫀": "https://files.catbox.moe/bke4vj.opus",
-          "💔": "https://files.catbox.moe/bke4vj.opus",
-          "🙇‍♂️": "https://files.catbox.moe/bke4vj.opus",
-          "🥺": "https://files.catbox.moe/o5270o.opus",
-          "😭": "https://files.catbox.moe/o5270o.opus",
-          "🥹": "https://files.catbox.moe/o5270o.opus"
-        };
-
-        let targetAudio = null;
-
-        if (emojiVoiceMap[cleanBody]) {
-          targetAudio = emojiVoiceMap[cleanBody];
-        } else {
-          for (const emoji of Object.keys(emojiVoiceMap)) {
-            if (cleanBody.endsWith(emoji)) {
-              targetAudio = emojiVoiceMap[emoji];
-              break;
-            }
-          }
-        }
-
-        if (targetAudio) {
-          try {
-            const audioStream = await axios.get(targetAudio, {
-              responseType: "arraybuffer",
-              timeout: 25000,
-              headers: { "User-Agent": "Mozilla/5.0" }
-            });
-
-            const voiceBuf = await convertToWhatsAppVoice(Buffer.from(audioStream.data));
-
-            await sock.sendMessage(from, {
-              audio: voiceBuf,
-              mimetype: "audio/ogg; codecs=opus",
-              ptt: true
-            }, { quoted: msg });
-            return;
-          } catch (evErr) {
-            console.error("Emoji Voice Send Error:", evErr.message);
-          }
-        }
-      }
-
       /* =========================================================
-         7. DYNAMIC PREFIX MATCHER (Supports ANY Symbol: , . ! # * etc.)
+         6. COMMAND ROUTING & PREFIX MATCHER
       ========================================================= */
+      const defaultPrefixes = [".", "!", "#", "/", "*", ","];
       const configuredPrefix = settings?.prefix || ".";
       let matchedPrefix = null;
 
@@ -784,13 +570,39 @@ function initBot(sock) {
         matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
       }
 
-      if (!matchedPrefix) return;
+      // 🛑 LOOP FIX 3: නිකන් අංක ගහද්දි Menu එක open වීම සහ auto command trigger වීම වැළැක්වීම
+      if (!matchedPrefix) {
+        // Song / Menu Sub-options Reply නම් පමණක් ඉදිරියට යැවීම
+        if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
+          const session = global.songSessions.get(quotedMsgId);
+          if (["1", "2", "3"].includes(cleanBody)) {
+            await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+            try {
+              if (cleanBody === "1") {
+                await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/mp4", fileName: `${session.title}.mp3` }, { quoted: msg });
+              } else if (cleanBody === "2") {
+                await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
+              } else if (cleanBody === "3") {
+                const songRes = await axios.get(session.url, { responseType: "arraybuffer", timeout: 45000 });
+                const voiceBuf = await convertToWhatsAppVoice(Buffer.from(songRes.data));
+                await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
+              }
+              await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+              return;
+            } catch (e) {
+              await reply("❌ Audio එක යැවීමේදී දෝෂයක් මතු විය.");
+              return;
+            }
+          }
+        }
+        return;
+      }
 
       const args = body.slice(matchedPrefix.length).trim().split(/ +/);
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | From: ${from} | Bot: +${currentBotNumber}`);
+      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
@@ -842,7 +654,7 @@ onSocketCreated((sock) => {
 });
 
 /* =========================================================
-   WEB UI & PAIR SERVICE (PREMIUM CYBERPUNK THEME)
+   WEB UI & PAIR SERVICE
 ========================================================= */
 
 app.get("/", (req, res) => {
@@ -861,188 +673,28 @@ app.get("/", (req, res) => {
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body {
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 20px;
-      background: #050507 radial-gradient(circle at 50% 0%, rgba(230, 0, 0, 0.25), transparent 70%);
-      font-family: 'Rajdhani', sans-serif;
-      color: #fff;
-      overflow-x: hidden;
-    }
-    .container {
-      width: 100%;
-      max-width: 420px;
-      background: rgba(16, 16, 22, 0.85);
-      border: 1px solid rgba(255, 30, 30, 0.35);
-      border-radius: 28px;
-      padding: 38px 26px;
-      text-align: center;
-      backdrop-filter: blur(16px);
-      box-shadow: 0 0 50px rgba(230, 0, 0, 0.2), inset 0 0 20px rgba(255, 30, 30, 0.05);
-      position: relative;
-    }
-    .avatar-wrapper {
-      position: relative;
-      width: 100px;
-      height: 100px;
-      margin: 0 auto 18px;
-    }
-    .avatar-img {
-      width: 100%;
-      height: 100%;
-      border-radius: 50%;
-      object-fit: cover;
-      border: 2px solid #ff2b2b;
-      box-shadow: 0 0 25px rgba(255, 43, 43, 0.6);
-      animation: pulseGlow 3s infinite alternate;
-    }
-    .online-indicator {
-      position: absolute;
-      bottom: 4px;
-      right: 4px;
-      width: 18px;
-      height: 18px;
-      background: #00ff88;
-      border: 3px solid #111;
-      border-radius: 50%;
-      box-shadow: 0 0 10px #00ff88;
-    }
-    @keyframes pulseGlow {
-      0% { box-shadow: 0 0 15px rgba(255, 30, 30, 0.4); }
-      100% { box-shadow: 0 0 35px rgba(255, 30, 30, 0.8); }
-    }
-    h1 {
-      font-family: 'Orbitron', sans-serif;
-      font-size: 24px;
-      letter-spacing: 2px;
-      color: #ffffff;
-      text-shadow: 0 0 15px rgba(255, 50, 50, 0.6);
-      margin-bottom: 4px;
-    }
-    .subtitle {
-      font-size: 14px;
-      color: #9ca3af;
-      margin-bottom: 24px;
-      font-weight: 500;
-      letter-spacing: 0.5px;
-    }
-    .input-box {
-      position: relative;
-      margin-bottom: 16px;
-    }
-    input {
-      width: 100%;
-      padding: 16px;
-      background: rgba(10, 10, 14, 0.9);
-      border: 1px solid rgba(255, 50, 50, 0.25);
-      border-radius: 16px;
-      color: #fff;
-      font-family: 'Rajdhani', sans-serif;
-      font-size: 18px;
-      font-weight: 600;
-      text-align: center;
-      letter-spacing: 2px;
-      outline: none;
-      transition: all 0.3s;
-    }
-    input:focus {
-      border-color: #ff2b2b;
-      box-shadow: 0 0 15px rgba(255, 43, 43, 0.4);
-      background: #0e0e14;
-    }
-    .btn {
-      width: 100%;
-      padding: 16px;
-      background: linear-gradient(135deg, #e60000, #880000);
-      border: none;
-      border-radius: 16px;
-      color: #fff;
-      font-family: 'Orbitron', sans-serif;
-      font-size: 14px;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      cursor: pointer;
-      box-shadow: 0 4px 20px rgba(230, 0, 0, 0.4);
-      transition: all 0.3s ease;
-    }
-    .btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 25px rgba(255, 40, 40, 0.6);
-    }
-    .btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      transform: none;
-    }
-    #result {
-      margin-top: 22px;
-      min-height: 48px;
-    }
-    .code-box {
-      background: rgba(8, 8, 12, 0.95);
-      border: 1.5px dashed #ff2b2b;
-      border-radius: 16px;
-      padding: 18px 12px;
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-    .code-box:hover {
-      background: rgba(18, 10, 10, 0.95);
-      box-shadow: 0 0 20px rgba(255, 43, 43, 0.3);
-    }
-    .code-text {
-      font-family: 'Orbitron', monospace;
-      font-size: 28px;
-      font-weight: 800;
-      color: #ff3b3b;
-      letter-spacing: 5px;
-      text-shadow: 0 0 10px rgba(255, 59, 59, 0.5);
-    }
-    .badge {
-      display: inline-block;
-      margin-top: 8px;
-      font-size: 12px;
-      font-weight: 600;
-      color: #00ff88;
-      background: rgba(0, 255, 136, 0.1);
-      border: 1px solid rgba(0, 255, 136, 0.3);
-      padding: 4px 12px;
-      border-radius: 20px;
-    }
-    .error {
-      color: #ff4d4d;
-      font-size: 14px;
-      font-weight: 600;
-      padding: 10px;
-      background: rgba(255, 0, 0, 0.1);
-      border-radius: 12px;
-      border: 1px solid rgba(255, 0, 0, 0.2);
-    }
-    .footer {
-      margin-top: 26px;
-      font-size: 13px;
-      color: #71717a;
-      letter-spacing: 1px;
-    }
-    .footer b {
-      color: #e60000;
-    }
+    body { min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; background: #050507 radial-gradient(circle at 50% 0%, rgba(230, 0, 0, 0.25), transparent 70%); font-family: 'Rajdhani', sans-serif; color: #fff; overflow-x: hidden; }
+    .container { width: 100%; max-width: 420px; background: rgba(16, 16, 22, 0.85); border: 1px solid rgba(255, 30, 30, 0.35); border-radius: 28px; padding: 38px 26px; text-align: center; backdrop-filter: blur(16px); box-shadow: 0 0 50px rgba(230, 0, 0, 0.2); position: relative; }
+    .avatar-wrapper { position: relative; width: 100px; height: 100px; margin: 0 auto 18px; }
+    .avatar-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid #ff2b2b; box-shadow: 0 0 25px rgba(255, 43, 43, 0.6); }
+    h1 { font-family: 'Orbitron', sans-serif; font-size: 24px; color: #ffffff; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; color: #9ca3af; margin-bottom: 24px; }
+    input { width: 100%; padding: 16px; background: rgba(10, 10, 14, 0.9); border: 1px solid rgba(255, 50, 50, 0.25); border-radius: 16px; color: #fff; font-size: 18px; text-align: center; outline: none; margin-bottom: 16px; }
+    .btn { width: 100%; padding: 16px; background: linear-gradient(135deg, #e60000, #880000); border: none; border-radius: 16px; color: #fff; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
+    #result { margin-top: 22px; min-height: 48px; }
+    .code-box { background: rgba(8, 8, 12, 0.95); border: 1.5px dashed #ff2b2b; border-radius: 16px; padding: 18px 12px; cursor: pointer; }
+    .code-text { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 800; color: #ff3b3b; letter-spacing: 5px; }
+    .badge { display: inline-block; margin-top: 8px; font-size: 12px; color: #00ff88; }
+    .error { color: #ff4d4d; font-size: 14px; padding: 10px; }
+    .footer { margin-top: 26px; font-size: 13px; color: #71717a; }
   </style>
 </head>
 <body>
 <div class="container">
-  <div class="avatar-wrapper">
-    <img src="${displayLogo}" alt="Dark Dinu Logo" class="avatar-img" />
-    <div class="online-indicator"></div>
-  </div>
+  <div class="avatar-wrapper"><img src="${displayLogo}" class="avatar-img" /></div>
   <h1>DARK DINU MD</h1>
   <p class="subtitle">WhatsApp Multi-Device Link System</p>
-  <div class="input-box">
-    <input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" />
-  </div>
+  <div class="input-box"><input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" /></div>
   <button id="pairBtn" class="btn" onclick="getCode()">GET PAIR CODE</button>
   <div id="result"></div>
   <div class="footer">POWERED BY <b>${DEVELOPER_NAME}</b></div>
@@ -1052,18 +704,15 @@ async function getCode() {
   var input = document.getElementById("number");
   var btn = document.getElementById("pairBtn");
   var resDiv = document.getElementById("result");
-
   var num = input.value.replace(/[^0-9]/g, "").trim();
   if (num.startsWith("0")) num = "94" + num.substring(1);
   if (!/^94[0-9]{9}$/.test(num)) {
     resDiv.innerHTML = '<div class="error">❌ Invalid phone number! Example: 07XXXXXXXX</div>';
     return;
   }
-
   btn.disabled = true;
   btn.innerText = "GENERATING...";
   resDiv.innerHTML = "";
-
   try {
     var res = await fetch("/pair?num=" + encodeURIComponent(num));
     var data = await res.json();
@@ -1113,7 +762,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =========================================================
-   24/7 KEEP-ALIVE SERVER START & ANTI-SLEEP
+   24/7 KEEP-ALIVE SERVER START
 ========================================================= */
 
 async function start() {
@@ -1124,14 +773,10 @@ async function start() {
   const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
 
-  console.log(`⏱️ Self Keep-Alive Scheduled: ${targetPing}`);
-
   setInterval(() => {
     try {
       const client = targetPing.startsWith("https") ? https : http;
-      client.get(targetPing, (res) => {
-        res.on("data", () => {});
-      }).on("error", () => {});
+      client.get(targetPing, (res) => { res.on("data", () => {}); }).on("error", () => {});
     } catch (e) {}
   }, 3 * 60 * 1000);
 
