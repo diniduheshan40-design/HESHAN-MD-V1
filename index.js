@@ -1,5 +1,8 @@
 require("dotenv").config();
 
+// Max listeners warning fix for 100+ bots
+process.setMaxListeners(0);
+
 process.on("uncaughtException", (err) => {
   console.error("⚠️ Caught Exception:", err.message);
 });
@@ -382,7 +385,7 @@ function initBot(sock) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
-              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "2") {
               await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "3") {
@@ -430,9 +433,7 @@ function initBot(sock) {
         }
       }
 
-      // ============================================================
-      // EMOJI VOICE REACTION SYSTEM
-      // ============================================================
+      // Emoji Voice Reaction System
       if (global.evoiceEnabled === undefined) {
         try {
           const evData = await BotMeta.findOne({ key: "evoice_status" });
@@ -450,13 +451,13 @@ function initBot(sock) {
           "🙏": "https://files.catbox.moe/1e2359.opus",
           "☸": "https://files.catbox.moe/1e2359.opus",
           "🌹": "https://files.catbox.moe/uxm1re.opus",
-          "💆‍♂️": "https://files.catbox.moe/uxm1re.opus",
+          "💆‍♂️️": "https://files.catbox.moe/uxm1re.opus",
           "😅": "https://files.catbox.moe/cvv435.opus",
           "🤣": "https://files.catbox.moe/cvv435.opus",
           "😂": "https://files.catbox.moe/cvv435.opus",
           "🫢": "https://files.catbox.moe/i2uw0g.opus",
           "🌚": "https://files.catbox.moe/i2uw0g.opus",
-          "💇‍♂️": "https://files.catbox.moe/i2uw0g.opus",
+          "💇‍♂️️": "https://files.catbox.moe/i2uw0g.opus",
           "🫣": "https://files.catbox.moe/oqfsdl.opus",
           "🤪": "https://files.catbox.moe/oqfsdl.opus",
           "😜": "https://files.catbox.moe/oqfsdl.opus",
@@ -667,7 +668,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =========================================================
-   24/7 KEEP-ALIVE SERVER START
+   24/7 KEEP-ALIVE SERVER START & ANTI-SLEEP
 ========================================================= */
 
 async function start() {
@@ -675,16 +676,21 @@ async function start() {
     console.log(`🚀 DARK DINU RUNNING ON PORT: ${PORT}`);
   });
 
-  const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
-  if (appUrl) {
-    const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
-    console.log(`⏱️ Self Keep-Alive Scheduled: ${targetPing}`);
+  // URL setup for 24/7 Self Ping
+  const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
 
-    setInterval(() => {
+  console.log(`⏱️ Self Keep-Alive Scheduled: ${targetPing}`);
+
+  // Ping every 3 minutes so server never sleeps
+  setInterval(() => {
+    try {
       const client = targetPing.startsWith("https") ? https : http;
-      client.get(targetPing, (res) => {}).on("error", () => {});
-    }, 4 * 60 * 1000);
-  }
+      client.get(targetPing, (res) => {
+        res.on("data", () => {});
+      }).on("error", () => {});
+    } catch (e) {}
+  }, 3 * 60 * 1000);
 
   try {
     console.log("🔄 Connecting to MongoDB...");
@@ -694,7 +700,7 @@ async function start() {
     });
     console.log("\x1b[32m%s\x1b[0m", "✅ [DATABASE] MongoDB connected!");
 
-    // Restore multi-bot sessions
+    // Restore multi-bot sessions staggered safely
     await restoreCredentials();
   } catch (err) {
     console.error("Startup error:", err.message);
