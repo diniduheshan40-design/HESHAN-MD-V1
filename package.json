@@ -4,7 +4,7 @@
   "description": "DARK DINU WhatsApp Bot with Web Pairing UI & MongoDB Session",
   "main": "index.js",
   "scripts": {
-    "start": "node --max-old-space-size=450 index.js"
+    "start": "node --max-old-space-size=2048 index.js"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
