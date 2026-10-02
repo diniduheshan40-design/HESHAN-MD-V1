@@ -1,6 +1,5 @@
 const mongoose = require("mongoose");
 
-// Database Model fallback inside command
 const BotSettingsSchema = new mongoose.Schema(
   {
     botNumber: { type: String, unique: true, required: true },
@@ -27,20 +26,22 @@ module.exports = {
   name: "setting",
   alias: ["settings", "config", "set"],
   category: "owner",
-  description: "Bot Settings Control Panel",
+  description: "Bot Settings Control Panel (Owner & Dev Only)",
   async execute(sock, msg, args, from, context) {
-    const { reply, isOwner, cleanBody } = context;
+    const { reply, isOwner, isDev, cleanBody } = context;
 
-    // Command එක run කළ bot ගේ අංකය ලබා ගැනීම
+    // Developer ට සහ Bot Owner ට පමණක් ක්‍රියාත්මක වීම
+    if (!isOwner && !isDev) {
+      return await reply("❌ මෙම Command එක භාවිතා කළ හැක්කේ Bot හිමිකරුට (Owner) සහ Developer ට පමණි!");
+    }
+
     const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
 
-    // Database එකෙන් settings ලබා ගැනීම
     let currentSettings = await SettingsModel.findOne({ botNumber: currentBotNumber });
     if (!currentSettings) {
       currentSettings = await SettingsModel.create({ botNumber: currentBotNumber });
     }
 
-    // අංක වලට (1.1, 1.2...) reply කර ඇති විට update කිරීම
     const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
     const inputCode = (cleanBody || "").trim();
 
@@ -49,13 +50,11 @@ module.exports = {
       let changeText = "";
 
       switch (inputCode) {
-        // Work Mode
         case "1.1": updateData.workMode = "public"; changeText = "Work Mode ➔ PUBLIC"; break;
         case "1.2": updateData.workMode = "private"; changeText = "Work Mode ➔ PRIVATE (Owner Only)"; break;
         case "1.3": updateData.workMode = "groups"; changeText = "Work Mode ➔ GROUPS ONLY"; break;
         case "1.4": updateData.workMode = "inbox"; changeText = "Work Mode ➔ INBOX ONLY"; break;
 
-        // Presence (Off කළ විට stuck වූ recording/typing status එක ක්ෂණිකව reset කිරීම)
         case "2.1":
           updateData.presence = "off";
           changeText = "Fake Presence ➔ OFF";
@@ -81,19 +80,15 @@ module.exports = {
           } catch (e) {}
           break;
 
-        // Anti ViewOnce
         case "3.1": updateData.antiViewRoute = "me"; changeText = "Anti-ViewOnce ➔ ME (Bot Inbox)"; break;
         case "3.2": updateData.antiViewRoute = "from"; changeText = "Anti-ViewOnce ➔ FROM (Current Chat)"; break;
 
-        // Anti Delete
         case "4.1": updateData.antiDeleteRoute = "me"; changeText = "Anti-Delete ➔ ME (Bot Inbox)"; break;
         case "4.2": updateData.antiDeleteRoute = "from"; changeText = "Anti-Delete ➔ FROM (Current Chat)"; break;
 
-        // Status Read
         case "5.1": updateData.statusSeen = true; changeText = "Auto Status Seen ➔ ON"; break;
         case "5.2": updateData.statusSeen = false; changeText = "Auto Status Seen ➔ OFF"; break;
 
-        // Status React
         case "6.1": updateData.statusReact = "💚"; changeText = "Auto Status React ➔ ON (💚)"; break;
         case "6.2": updateData.statusReact = "off"; changeText = "Auto Status React ➔ OFF"; break;
 
@@ -107,7 +102,6 @@ module.exports = {
         { upsert: true }
       );
 
-      // In-memory cache reset (අලුත් settings ක්ෂණිකව ක්‍රියාත්මක වීමට)
       if (global.settingsCache) {
         global.settingsCache.delete(currentBotNumber);
       }
@@ -116,7 +110,6 @@ module.exports = {
       return await reply(`⚙️ *SETTINGS UPDATED!*\n\n✔ ${changeText}\n🤖 *Bot Number:* +${currentBotNumber}`);
     }
 
-    // Direct arguments (.setting prefix ! හෝ .setting mode private)
     if (args.length >= 2) {
       const opt = args[0].toLowerCase();
       const val = args[1];
@@ -133,7 +126,6 @@ module.exports = {
       }
     }
 
-    // Main Control Panel Message
     const panelText = 
 `╭───『 ⚙️ 𝐁𝐎𝐓 𝐒𝐄𝐓𝐓𝐈𝐍𝐆 𝐏𝐀𝐍𝐄𝐋 』───◆
 │
@@ -145,7 +137,7 @@ module.exports = {
 │ 👁️ *Status Seen:* ${currentSettings.statusSeen ? "ON" : "OFF"}
 │ ❤️ *Status React:* ${currentSettings.statusReact}
 │ 🔄 *Anti-ViewOnce:* ${currentSettings.antiViewRoute.toUpperCase()}
-│ 🗑️ *Anti-Delete:* ${currentSettings.antiDeleteRoute.toUpperCase()}
+│ 🗑️️ *Anti-Delete:* ${currentSettings.antiDeleteRoute.toUpperCase()}
 │
 ╰──────────────────────────◆
 
