@@ -55,10 +55,31 @@ module.exports = {
         case "1.3": updateData.workMode = "groups"; changeText = "Work Mode ➔ GROUPS ONLY"; break;
         case "1.4": updateData.workMode = "inbox"; changeText = "Work Mode ➔ INBOX ONLY"; break;
 
-        // Presence
-        case "2.1": updateData.presence = "off"; changeText = "Fake Presence ➔ OFF"; break;
-        case "2.2": updateData.presence = "typing"; changeText = "Fake Presence ➔ TYPING (Composing)"; break;
-        case "2.3": updateData.presence = "recording"; changeText = "Fake Presence ➔ RECORDING"; break;
+        // Presence (Off කළ විට stuck වූ recording/typing status එක ක්ෂණිකව reset කිරීම)
+        case "2.1":
+          updateData.presence = "off";
+          changeText = "Fake Presence ➔ OFF";
+          try {
+            await sock.sendPresenceUpdate("paused", from);
+            await sock.sendPresenceUpdate("available");
+          } catch (e) {}
+          break;
+        case "2.2":
+          updateData.presence = "typing";
+          changeText = "Fake Presence ➔ TYPING (Composing)";
+          try {
+            await sock.presenceSubscribe(from);
+            await sock.sendPresenceUpdate("composing", from);
+          } catch (e) {}
+          break;
+        case "2.3":
+          updateData.presence = "recording";
+          changeText = "Fake Presence ➔ RECORDING";
+          try {
+            await sock.presenceSubscribe(from);
+            await sock.sendPresenceUpdate("recording", from);
+          } catch (e) {}
+          break;
 
         // Anti ViewOnce
         case "3.1": updateData.antiViewRoute = "me"; changeText = "Anti-ViewOnce ➔ ME (Bot Inbox)"; break;
@@ -86,10 +107,9 @@ module.exports = {
         { upsert: true }
       );
 
-      // In-memory cache update
+      // In-memory cache reset (අලුත් settings ක්ෂණිකව ක්‍රියාත්මක වීමට)
       if (global.settingsCache) {
-        const cached = global.settingsCache.get(currentBotNumber) || {};
-        global.settingsCache.set(currentBotNumber, { ...cached, ...updateData });
+        global.settingsCache.delete(currentBotNumber);
       }
 
       await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
@@ -103,10 +123,12 @@ module.exports = {
 
       if (opt === "prefix") {
         await SettingsModel.findOneAndUpdate({ botNumber: currentBotNumber }, { $set: { prefix: val } });
+        if (global.settingsCache) global.settingsCache.delete(currentBotNumber);
         return await reply(`✅ Prefix එක සාර්ථකව *${val}* ලෙස මාරු කරන ලදී.`);
       }
       if (opt === "mode" && ["public", "private", "groups", "inbox"].includes(val.toLowerCase())) {
         await SettingsModel.findOneAndUpdate({ botNumber: currentBotNumber }, { $set: { workMode: val.toLowerCase() } });
+        if (global.settingsCache) global.settingsCache.delete(currentBotNumber);
         return await reply(`✅ Mode එක සාර්ථකව *${val.toUpperCase()}* ලෙස මාරු කරන ලදී.`);
       }
     }
@@ -163,10 +185,24 @@ module.exports = {
 • .setlogo [reply to photo]`;
 
     try {
-      const sent = await sock.sendMessage(from, { text: panelText }, { quoted: msg });
+      const panelLogo = currentSettings.botLogo || "https://files.catbox.moe/3fxa4u.jpeg";
+
+      let sent;
+      try {
+        sent = await sock.sendMessage(
+          from,
+          {
+            image: { url: panelLogo },
+            caption: panelText
+          },
+          { quoted: msg }
+        );
+      } catch (imgErr) {
+        sent = await sock.sendMessage(from, { text: panelText }, { quoted: msg });
+      }
+
       if (sent?.key?.id) {
         global.settingSessions.set(sent.key.id, { timestamp: Date.now() });
-        // Session timeout in 3 minutes
         setTimeout(() => global.settingSessions.delete(sent.key.id), 180000);
       }
     } catch (e) {
