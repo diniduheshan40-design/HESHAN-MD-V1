@@ -314,7 +314,7 @@ function initBot(sock) {
             );
           }
         } catch (err) {
-          console.error("⚠️ Connection message error:", err.message);
+          console.error("⚠️️ Connection message error:", err.message);
         }
       }, 2500);
     }
@@ -336,6 +336,34 @@ function initBot(sock) {
       const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
       const ownerJid = `${currentBotNumber}@s.whatsapp.net`;
       const settings = await getBotSettings(currentBotNumber);
+
+      const isGroup = from.endsWith("@g.us");
+      let sender = isGroup ? msg.key.participant : from;
+      if (msg.key.fromMe) {
+        sender = `${currentBotNumber}@s.whatsapp.net`;
+      }
+
+      const body = extractMessageBody(msg);
+      const cleanBody = body.trim();
+      const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
+
+      const isDev = Boolean(
+        senderClean === DEVELOPER_NUMBER ||
+        senderClean === DEVELOPER_LID ||
+        sender?.includes(DEVELOPER_NUMBER) ||
+        sender?.includes(DEVELOPER_LID)
+      );
+
+      const isBotOwner = Boolean(
+        msg.key.fromMe ||
+        senderClean === currentBotNumber
+      );
+
+      const isOwner = Boolean(isDev || isBotOwner);
+
+      const reply = async (text) => {
+        return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
+      };
 
       /* =========================================================
          1. ANTI-DELETE STORE CACHING (Save recent messages)
@@ -388,30 +416,23 @@ function initBot(sock) {
               rawDeletedMsg.videoMessage?.caption ||
               "";
 
-            // 1. Text Message එකක් නම්:
             if (rawDeletedMsg.conversation || rawDeletedMsg.extendedTextMessage) {
               await sock.sendMessage(targetSendJid, {
                 text: `${alertHeader}\n\n📝 *Deleted Message:*\n${deletedText || "_No Text Content_"}`
               });
-            } 
-            // 2. Image එකක් නම්:
-            else if (rawDeletedMsg.imageMessage) {
+            } else if (rawDeletedMsg.imageMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
               await sock.sendMessage(targetSendJid, {
                 image: buffer,
                 caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}`
               });
-            } 
-            // 3. Video එකක් නම්:
-            else if (rawDeletedMsg.videoMessage) {
+            } else if (rawDeletedMsg.videoMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
               await sock.sendMessage(targetSendJid, {
                 video: buffer,
                 caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}`
               });
-            } 
-            // 4. Voice Note / Audio එකක් නම්:
-            else if (rawDeletedMsg.audioMessage) {
+            } else if (rawDeletedMsg.audioMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
               await sock.sendMessage(targetSendJid, { text: alertHeader });
               await sock.sendMessage(targetSendJid, {
@@ -419,15 +440,11 @@ function initBot(sock) {
                 mimetype: rawDeletedMsg.audioMessage.mimetype || "audio/ogg; codecs=opus",
                 ptt: rawDeletedMsg.audioMessage.ptt || false
               });
-            } 
-            // 5. Sticker එකක් නම්:
-            else if (rawDeletedMsg.stickerMessage) {
+            } else if (rawDeletedMsg.stickerMessage) {
               const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
               await sock.sendMessage(targetSendJid, { text: alertHeader });
               await sock.sendMessage(targetSendJid, { sticker: buffer });
-            } 
-            // 6. Fallback:
-            else {
+            } else {
               await sock.sendMessage(targetSendJid, {
                 text: `${alertHeader}\n\n📝 *Content:*\n${deletedText || "_Unsupported Media_"}`
               });
@@ -440,10 +457,15 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         3. ANTI-VIEWONCE HANDLER
+         3. ANTI-VIEWONCE HANDLER & EMOJI REPLY TRIGGER
       ========================================================= */
-      const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage;
-      if (viewOnce && !msg.key.fromMe) {
+      const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤️", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
+      const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+      const isEmojiReplyVO = quotedMsg && antiViewEmojis.includes(cleanBody) && (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage);
+
+      const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage || (isEmojiReplyVO ? (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage) : null);
+
+      if (viewOnce && (!msg.key.fromMe || isEmojiReplyVO)) {
         const targetViewJid = settings.antiViewRoute === "me" ? ownerJid : from;
         const senderNum = (msg.key.participant || from).split("@")[0].replace(/[^0-9]/g, "");
 
@@ -453,12 +475,16 @@ function initBot(sock) {
           const mediaMsg = isImg ? innerMsg.imageMessage : innerMsg.videoMessage;
 
           if (mediaMsg) {
-            const buffer = await downloadMediaMessage(
-              { key: msg.key, message: innerMsg },
-              "buffer",
-              {},
-              { logger: console }
-            );
+            const voMsgContext = isEmojiReplyVO ? {
+              key: {
+                remoteJid: from,
+                id: msg.message.extendedTextMessage.contextInfo.stanzaId,
+                participant: msg.message.extendedTextMessage.contextInfo.participant
+              },
+              message: innerMsg
+            } : { key: msg.key, message: innerMsg };
+
+            const buffer = await downloadMediaMessage(voMsgContext, "buffer", {}, { logger: console });
 
             const caption = 
 `╭───『 👁️ 𝐀𝐍𝐓𝐈-𝐕𝐈𝐄𝐖𝐎𝐍𝐂𝐄 』───◆
@@ -475,6 +501,7 @@ function initBot(sock) {
             } else {
               await sock.sendMessage(targetViewJid, { video: buffer, caption });
             }
+            if (isEmojiReplyVO) return;
           }
         } catch (voErr) {
           console.error("Anti-ViewOnce error:", voErr.message);
@@ -501,37 +528,6 @@ function initBot(sock) {
         } catch (e) {}
         return;
       }
-
-      const isGroup = from.endsWith("@g.us");
-      let sender = isGroup ? msg.key.participant : from;
-      if (msg.key.fromMe) {
-        sender = `${currentBotNumber}@s.whatsapp.net`;
-      }
-
-      const body = extractMessageBody(msg);
-      if (!body) return;
-
-      const reply = async (text) => {
-        return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
-      };
-
-      const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
-      const cleanBody = body.trim();
-      const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
-
-      const isDev = Boolean(
-        senderClean === DEVELOPER_NUMBER ||
-        senderClean === DEVELOPER_LID ||
-        sender?.includes(DEVELOPER_NUMBER) ||
-        sender?.includes(DEVELOPER_LID)
-      );
-
-      const isBotOwner = Boolean(
-        msg.key.fromMe ||
-        senderClean === currentBotNumber
-      );
-
-      const isOwner = Boolean(isDev || isBotOwner);
 
       /* =========================================================
          5. WORK MODE PROTECTION
@@ -563,11 +559,12 @@ function initBot(sock) {
       }
 
       // Settings Reply Handler
+      const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
       if (quotedMsgId && global.settingSessions.has(quotedMsgId) && isOwner) {
         const settingCmd = getCommand("setting");
         if (settingCmd && typeof settingCmd.execute === "function") {
           return await settingCmd.execute(sock, msg, [], from, {
-            reply, isOwner, cleanBody, body, sender, DEVELOPER_NAME, DEVELOPER_NUMBER
+            reply, isOwner, isDev, cleanBody, body, sender, DEVELOPER_NAME, DEVELOPER_NUMBER
           });
         }
       }
@@ -653,9 +650,9 @@ function initBot(sock) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
-              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "2") {
-              await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "3") {
               await sock.sendMessage(from, { audio: { url: fbSession.audio || fbSession.sd }, mimetype: "audio/mp4", fileName: "audio.mp3" }, { quoted: msg });
             }
@@ -711,7 +708,7 @@ function initBot(sock) {
         }
       }
 
-      const defaultPrefixes = [".", "!", "#", "/"];
+      const defaultPrefixes = [".", "!", "#", "/", "*", ","];
       const isCmdStart = defaultPrefixes.some(p => cleanBody.startsWith(p)) || (settings.prefix && cleanBody.startsWith(settings.prefix));
 
       if (global.evoiceEnabled && cleanBody && !isCmdStart) {
@@ -732,7 +729,7 @@ function initBot(sock) {
           "🥵": "https://files.catbox.moe/bfwnvj.opus",
           "🤤": "https://files.catbox.moe/bfwnvj.opus",
           "🍑": "https://files.catbox.moe/bfwnvj.opus",
-          "𫀀": "https://files.catbox.moe/bke4vj.opus",
+          "🫀": "https://files.catbox.moe/bke4vj.opus",
           "💔": "https://files.catbox.moe/bke4vj.opus",
           "🙇‍♂️": "https://files.catbox.moe/bke4vj.opus",
           "🥺": "https://files.catbox.moe/o5270o.opus",
@@ -775,13 +772,15 @@ function initBot(sock) {
         }
       }
 
-      // Dynamic Prefix Matcher
-      const configuredPrefix = settings.prefix || ".";
+      /* =========================================================
+         7. DYNAMIC PREFIX MATCHER (Supports ANY Symbol: , . ! # * etc.)
+      ========================================================= */
+      const configuredPrefix = settings?.prefix || ".";
       let matchedPrefix = null;
 
       if (body.startsWith(configuredPrefix)) {
         matchedPrefix = configuredPrefix;
-      } else {
+      } else if (defaultPrefixes.some(p => body.startsWith(p))) {
         matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
       }
 
