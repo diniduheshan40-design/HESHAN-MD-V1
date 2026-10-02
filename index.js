@@ -113,6 +113,7 @@ const BotSettingsModel =
   mongoose.model("DarkDinuSettings", BotSettingsSchema);
 
 const settingsCache = new Map();
+global.settingsCache = settingsCache;
 
 async function getBotSettings(botNumber) {
   const cleanNumber = String(botNumber || "").replace(/[^0-9]/g, "");
@@ -241,7 +242,7 @@ function initBot(sock) {
     if (connection === "open") {
       console.log("\x1b[32m%s\x1b[0m", "🎉 [DARK DINU] WhatsApp Connected Successfully!");
 
-      // Keep Alive: නිතරම Online බව WhatsApp server එකට තහවුරු කිරීම (Always Online Fix)
+      // Always Online interval: WhatsApp server එකට available presence යැවීම
       if (sock.presenceInterval) clearInterval(sock.presenceInterval);
       sock.presenceInterval = setInterval(async () => {
         try {
@@ -349,7 +350,6 @@ function initBot(sock) {
           time: new Date()
         });
 
-        // Memory cleanup: keep max 1000 messages in RAM
         if (global.msgStore.size > 1000) {
           const firstKey = global.msgStore.keys().next().value;
           global.msgStore.delete(firstKey);
@@ -360,7 +360,7 @@ function initBot(sock) {
          2. ANTI-DELETE DETECTION (Protocol Revoke)
       ========================================================= */
       const protocolMsg = msg.message?.protocolMessage;
-      if (protocolMsg && protocolMsg.type === 0) { // 0 = Revoke / Delete
+      if (protocolMsg && protocolMsg.type === 0) {
         const deletedId = protocolMsg.key?.id;
         if (deletedId && global.msgStore.has(deletedId)) {
           const cached = global.msgStore.get(deletedId);
@@ -491,7 +491,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. FAKE PRESENCE (Auto Typing / Recording & Keep Online Fix)
+         6. FAKE PRESENCE (Auto Typing / Recording & Clean Paused)
       ========================================================= */
       if (settings.presence === "typing") {
         try {
@@ -504,7 +504,9 @@ function initBot(sock) {
           await sock.sendPresenceUpdate("recording", from);
         } catch (e) {}
       } else {
+        // Off කර ඇති විට stuck වූ presence ක්ෂණිකව reset කර online තැබීම
         try {
+          await sock.sendPresenceUpdate("paused", from);
           await sock.sendPresenceUpdate("available");
         } catch (e) {}
       }
@@ -762,7 +764,7 @@ function initBot(sock) {
           });
         } catch (cmdErr) {
           console.error(`❌ Execution error in ${commandName}:`, cmdErr);
-          await reply(`⚠️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
+          await reply(`⚠️️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
         }
       } else if (["ping", "speed", "p"].includes(commandName)) {
         try {
