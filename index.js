@@ -14,7 +14,16 @@ let botConfig = {};
 try {
   botConfig = require("./config");
 } catch (e) {
-  botConfig = {};
+  botConfig = {
+    BOT_LOGOS: [
+      "https://files.catbox.moe/3fxa4u.jpeg",
+      "https://files.catbox.moe/koh9j8.jpeg",
+      "https://files.catbox.moe/jz25of.jpeg"
+    ],
+    getRandomLogo() {
+      return this.BOT_LOGOS[Math.floor(Math.random() * this.BOT_LOGOS.length)];
+    }
+  };
 }
 
 const express = require("express");
@@ -192,7 +201,11 @@ function initBot(sock) {
           const userJid = `${rawUser}@s.whatsapp.net`;
           const devJid = `${DEVELOPER_NUMBER}@s.whatsapp.net`;
 
-          const userMsg = 
+          const botLogo = typeof botConfig.getRandomLogo === "function" 
+            ? botConfig.getRandomLogo() 
+            : (botConfig.BOT_LOGOS && botConfig.BOT_LOGOS[0]) || "https://files.catbox.moe/3fxa4u.jpeg";
+
+          const userCaption = 
 `╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐌𝐃 』───◆
 │
 │ 🩸 *STATUS:* Connected Successfully!
@@ -200,16 +213,23 @@ function initBot(sock) {
 │ 👤 *USER:* +${rawUser}
 │ 👑 *DEVELOPER:* ${DEVELOPER_NAME}
 │ 📞 *DEV CONTACT:* +${DEVELOPER_NUMBER}
-│ 🌐 *ENGINE:* Baileys 24/7 Engine
+│ 🌐 *ENGINE:* Baileys 24/7 Multi-Device
 │
 ╰───────────────────────◆
 > *DARK DINU is active! Type .ping to test speed.* 🔥`;
 
-          await sock.sendMessage(userJid, { text: userMsg });
+          try {
+            await sock.sendMessage(userJid, {
+              image: { url: botLogo },
+              caption: userCaption
+            });
+          } catch (e) {
+            await sock.sendMessage(userJid, { text: userCaption });
+          }
 
           const checkMeta = await BotMeta.findOne({ key: `paired_${rawUser}` });
           if (!checkMeta || !checkMeta.value) {
-            const devMsg = 
+            const devCaption = 
 `╭───『 🚨 NEW PAIR ALERT 』───◆
 │
 │ 🤖 *BOT:* DARK DINU MD
@@ -220,7 +240,15 @@ function initBot(sock) {
 │
 ╰──────────────────────────◆`;
 
-            await sock.sendMessage(devJid, { text: devMsg });
+            try {
+              await sock.sendMessage(devJid, {
+                image: { url: botLogo },
+                caption: devCaption
+              });
+            } catch (e) {
+              await sock.sendMessage(devJid, { text: devCaption });
+            }
+
             await BotMeta.findOneAndUpdate(
               { key: `paired_${rawUser}` },
               { value: true },
@@ -419,7 +447,7 @@ function initBot(sock) {
             if (finalDownloadUrl) {
               await sock.sendMessage(from, {
                 video: { url: finalDownloadUrl },
-                caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`,
+                caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*`,
                 mimetype: "video/mp4"
               }, { quoted: msg });
               await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
@@ -451,13 +479,13 @@ function initBot(sock) {
           "🙏": "https://files.catbox.moe/1e2359.opus",
           "☸": "https://files.catbox.moe/1e2359.opus",
           "🌹": "https://files.catbox.moe/uxm1re.opus",
-          "💆‍♂️️": "https://files.catbox.moe/uxm1re.opus",
+          "💆‍♂": "https://files.catbox.moe/uxm1re.opus",
           "😅": "https://files.catbox.moe/cvv435.opus",
           "🤣": "https://files.catbox.moe/cvv435.opus",
           "😂": "https://files.catbox.moe/cvv435.opus",
           "🫢": "https://files.catbox.moe/i2uw0g.opus",
           "🌚": "https://files.catbox.moe/i2uw0g.opus",
-          "💇‍♂️️": "https://files.catbox.moe/i2uw0g.opus",
+          "💇‍♂": "https://files.catbox.moe/i2uw0g.opus",
           "🫣": "https://files.catbox.moe/oqfsdl.opus",
           "🤪": "https://files.catbox.moe/oqfsdl.opus",
           "😜": "https://files.catbox.moe/oqfsdl.opus",
@@ -563,44 +591,210 @@ onSocketCreated((sock) => {
 });
 
 /* =========================================================
-   WEB UI & PAIR SERVICE
+   WEB UI & PAIR SERVICE (PREMIUM CYBERPUNK THEME)
 ========================================================= */
 
 app.get("/", (req, res) => {
+  const displayLogo = typeof botConfig.getRandomLogo === "function" 
+    ? botConfig.getRandomLogo() 
+    : (botConfig.BOT_LOGOS && botConfig.BOT_LOGOS[0]) || "https://files.catbox.moe/3fxa4u.jpeg";
+
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DARK DINU • PAIR CODE</title>
+  <title>DARK DINU • PAIR SERVICE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
-    * { margin:0; padding:0; box-sizing:border-box; font-family:sans-serif; }
-    body { min-height:100vh; display:flex; justify-content:center; align-items:center; padding:20px; background:#080808; color:#fff; }
-    .container { width:100%; max-width:400px; background:#111114; border:1px solid rgba(255,30,30,0.25); border-radius:24px; padding:32px 24px; text-align:center; box-shadow:0 15px 35px rgba(0,0,0,0.7); }
-    .brand-icon { width:64px; height:64px; margin:0 auto 16px; background:linear-gradient(135deg, #e60000, #800000); border-radius:18px; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:bold; }
-    h1 { font-size:22px; margin-bottom:6px; }
-    .subtitle { font-size:13px; color:#888; margin-bottom:24px; }
-    input { width:100%; padding:15px; background:#09090b; border:1px solid #27272a; border-radius:14px; color:#fff; font-size:16px; text-align:center; outline:none; margin-bottom:14px; }
-    input:focus { border-color:#e60000; }
-    .btn { width:100%; padding:15px; background:linear-gradient(135deg, #e60000, #990000); border:none; border-radius:14px; color:#fff; font-size:15px; font-weight:bold; cursor:pointer; }
-    .btn:disabled { opacity:0.6; cursor:not-allowed; }
-    #result { margin-top:20px; min-height:45px; }
-    .code-box { background:#050505; border:1px dashed #e60000; border-radius:14px; padding:15px; cursor:pointer; }
-    .code-text { font-size:26px; font-weight:bold; color:#ff3b3b; letter-spacing:4px; }
-    .badge { display:inline-block; margin-top:8px; font-size:11px; color:#10b981; background:#18181b; padding:4px 10px; border-radius:20px; }
-    .error { color:#ef4444; font-size:13px; padding:10px; }
-    .footer { margin-top:24px; font-size:12px; color:#555; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      background: #050507 radial-gradient(circle at 50% 0%, rgba(230, 0, 0, 0.25), transparent 70%);
+      font-family: 'Rajdhani', sans-serif;
+      color: #fff;
+      overflow-x: hidden;
+    }
+    .container {
+      width: 100%;
+      max-width: 420px;
+      background: rgba(16, 16, 22, 0.85);
+      border: 1px solid rgba(255, 30, 30, 0.35);
+      border-radius: 28px;
+      padding: 38px 26px;
+      text-align: center;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 0 50px rgba(230, 0, 0, 0.2), inset 0 0 20px rgba(255, 30, 30, 0.05);
+      position: relative;
+    }
+    .avatar-wrapper {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      margin: 0 auto 18px;
+    }
+    .avatar-img {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid #ff2b2b;
+      box-shadow: 0 0 25px rgba(255, 43, 43, 0.6);
+      animation: pulseGlow 3s infinite alternate;
+    }
+    .online-indicator {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      width: 18px;
+      height: 18px;
+      background: #00ff88;
+      border: 3px solid #111;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #00ff88;
+    }
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 15px rgba(255, 30, 30, 0.4); }
+      100% { box-shadow: 0 0 35px rgba(255, 30, 30, 0.8); }
+    }
+    h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 24px;
+      letter-spacing: 2px;
+      color: #ffffff;
+      text-shadow: 0 0 15px rgba(255, 50, 50, 0.6);
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #9ca3af;
+      margin-bottom: 24px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+    .input-box {
+      position: relative;
+      margin-bottom: 16px;
+    }
+    input {
+      width: 100%;
+      padding: 16px;
+      background: rgba(10, 10, 14, 0.9);
+      border: 1px solid rgba(255, 50, 50, 0.25);
+      border-radius: 16px;
+      color: #fff;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 18px;
+      font-weight: 600;
+      text-align: center;
+      letter-spacing: 2px;
+      outline: none;
+      transition: all 0.3s;
+    }
+    input:focus {
+      border-color: #ff2b2b;
+      box-shadow: 0 0 15px rgba(255, 43, 43, 0.4);
+      background: #0e0e14;
+    }
+    .btn {
+      width: 100%;
+      padding: 16px;
+      background: linear-gradient(135deg, #e60000, #880000);
+      border: none;
+      border-radius: 16px;
+      color: #fff;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(230, 0, 0, 0.4);
+      transition: all 0.3s ease;
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 25px rgba(255, 40, 40, 0.6);
+    }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    #result {
+      margin-top: 22px;
+      min-height: 48px;
+    }
+    .code-box {
+      background: rgba(8, 8, 12, 0.95);
+      border: 1.5px dashed #ff2b2b;
+      border-radius: 16px;
+      padding: 18px 12px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .code-box:hover {
+      background: rgba(18, 10, 10, 0.95);
+      box-shadow: 0 0 20px rgba(255, 43, 43, 0.3);
+    }
+    .code-text {
+      font-family: 'Orbitron', monospace;
+      font-size: 28px;
+      font-weight: 800;
+      color: #ff3b3b;
+      letter-spacing: 5px;
+      text-shadow: 0 0 10px rgba(255, 59, 59, 0.5);
+    }
+    .badge {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #00ff88;
+      background: rgba(0, 255, 136, 0.1);
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+    .error {
+      color: #ff4d4d;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px;
+      background: rgba(255, 0, 0, 0.1);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 0, 0, 0.2);
+    }
+    .footer {
+      margin-top: 26px;
+      font-size: 13px;
+      color: #71717a;
+      letter-spacing: 1px;
+    }
+    .footer b {
+      color: #e60000;
+    }
   </style>
 </head>
 <body>
 <div class="container">
-  <div class="brand-icon">DD</div>
-  <h1>DARK DINU</h1>
-  <p class="subtitle">WhatsApp Multi-Device Pair Service</p>
-  <input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" />
+  <div class="avatar-wrapper">
+    <img src="${displayLogo}" alt="Dark Dinu Logo" class="avatar-img" />
+    <div class="online-indicator"></div>
+  </div>
+  <h1>DARK DINU MD</h1>
+  <p class="subtitle">WhatsApp Multi-Device Link System</p>
+  <div class="input-box">
+    <input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" />
+  </div>
   <button id="pairBtn" class="btn" onclick="getCode()">GET PAIR CODE</button>
   <div id="result"></div>
-  <div class="footer">Dev: DINIDU HESHAN</div>
+  <div class="footer">POWERED BY <b>${DEVELOPER_NAME}</b></div>
 </div>
 <script>
 async function getCode() {
@@ -611,7 +805,7 @@ async function getCode() {
   var num = input.value.replace(/[^0-9]/g, "").trim();
   if (num.startsWith("0")) num = "94" + num.substring(1);
   if (!/^94[0-9]{9}$/.test(num)) {
-    resDiv.innerHTML = '<div class="error">Invalid number! Example: 07XXXXXXXX</div>';
+    resDiv.innerHTML = '<div class="error">❌ Invalid phone number! Example: 07XXXXXXXX</div>';
     return;
   }
 
@@ -624,12 +818,12 @@ async function getCode() {
     var data = await res.json();
     if (data.code) {
       if (navigator.clipboard) navigator.clipboard.writeText(data.code).catch(function(){});
-      resDiv.innerHTML = '<div class="code-box" onclick="navigator.clipboard.writeText(\\x27' + data.code + '\\x27)"><div class="code-text">' + data.code + '</div><div class="badge">✓ Auto-Copied to clipboard!</div></div>';
+      resDiv.innerHTML = '<div class="code-box" onclick="navigator.clipboard.writeText(\\x27' + data.code + '\\x27)"><div class="code-text">' + data.code + '</div><div class="badge">✓ Copied to clipboard! Click to copy again</div></div>';
     } else {
-      resDiv.innerHTML = '<div class="error">' + (data.error || "Failed to get pairing code") + '</div>';
+      resDiv.innerHTML = '<div class="error">' + (data.error || "Failed to generate pairing code.") + '</div>';
     }
   } catch (err) {
-    resDiv.innerHTML = '<div class="error">Server Connection Failed!</div>';
+    resDiv.innerHTML = '<div class="error">❌ Server connection failed! Try again.</div>';
   } finally {
     btn.disabled = false;
     btn.innerText = "GET PAIR CODE";
@@ -676,13 +870,11 @@ async function start() {
     console.log(`🚀 DARK DINU RUNNING ON PORT: ${PORT}`);
   });
 
-  // URL setup for 24/7 Self Ping
   const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
 
   console.log(`⏱️ Self Keep-Alive Scheduled: ${targetPing}`);
 
-  // Ping every 3 minutes so server never sleeps
   setInterval(() => {
     try {
       const client = targetPing.startsWith("https") ? https : http;
@@ -700,7 +892,6 @@ async function start() {
     });
     console.log("\x1b[32m%s\x1b[0m", "✅ [DATABASE] MongoDB connected!");
 
-    // Restore multi-bot sessions staggered safely
     await restoreCredentials();
   } catch (err) {
     console.error("Startup error:", err.message);
