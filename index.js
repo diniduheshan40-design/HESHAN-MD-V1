@@ -242,7 +242,6 @@ function initBot(sock) {
     if (connection === "open") {
       console.log("\x1b[32m%s\x1b[0m", "🎉 [DARK DINU] WhatsApp Connected Successfully!");
 
-      // Always Online interval: WhatsApp server එකට available presence යැවීම
       if (sock.presenceInterval) clearInterval(sock.presenceInterval);
       sock.presenceInterval = setInterval(async () => {
         try {
@@ -357,10 +356,10 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         2. ANTI-DELETE DETECTION (Protocol Revoke)
+         2. ANTI-DELETE DETECTION (Protocol Revoke - FIXED)
       ========================================================= */
       const protocolMsg = msg.message?.protocolMessage;
-      if (protocolMsg && protocolMsg.type === 0) {
+      if (protocolMsg && protocolMsg.type === 0) { // 0 = Revoke / Delete
         const deletedId = protocolMsg.key?.id;
         if (deletedId && global.msgStore.has(deletedId)) {
           const cached = global.msgStore.get(deletedId);
@@ -374,12 +373,65 @@ function initBot(sock) {
 │ 💬 *Chat:* ${cached.from.endsWith("@g.us") ? "Group Chat" : "Private Chat"}
 │ ⏰ *Time:* ${cached.time.toLocaleTimeString("en-LK", { timeZone: "Asia/Colombo" })}
 │
-╰───────────────────────────────◆
-> *Deleted Content:* 👇`;
+╰───────────────────────────────◆`;
 
           try {
-            await sock.sendMessage(targetSendJid, { text: alertHeader });
-            await sock.copyNForward(targetSendJid, cached.msg, false);
+            let rawDeletedMsg = cached.msg.message;
+            if (rawDeletedMsg.ephemeralMessage) rawDeletedMsg = rawDeletedMsg.ephemeralMessage.message;
+            if (rawDeletedMsg.viewOnceMessageV2) rawDeletedMsg = rawDeletedMsg.viewOnceMessageV2.message;
+            if (rawDeletedMsg.viewOnceMessage) rawDeletedMsg = rawDeletedMsg.viewOnceMessage.message;
+
+            let deletedText = 
+              rawDeletedMsg.conversation ||
+              rawDeletedMsg.extendedTextMessage?.text ||
+              rawDeletedMsg.imageMessage?.caption ||
+              rawDeletedMsg.videoMessage?.caption ||
+              "";
+
+            // 1. Text Message එකක් නම්:
+            if (rawDeletedMsg.conversation || rawDeletedMsg.extendedTextMessage) {
+              await sock.sendMessage(targetSendJid, {
+                text: `${alertHeader}\n\n📝 *Deleted Message:*\n${deletedText || "_No Text Content_"}`
+              });
+            } 
+            // 2. Image එකක් නම්:
+            else if (rawDeletedMsg.imageMessage) {
+              const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
+              await sock.sendMessage(targetSendJid, {
+                image: buffer,
+                caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}`
+              });
+            } 
+            // 3. Video එකක් නම්:
+            else if (rawDeletedMsg.videoMessage) {
+              const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
+              await sock.sendMessage(targetSendJid, {
+                video: buffer,
+                caption: `${alertHeader}\n\n📝 *Caption:*\n${deletedText || "_No Caption_"}`
+              });
+            } 
+            // 4. Voice Note / Audio එකක් නම්:
+            else if (rawDeletedMsg.audioMessage) {
+              const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
+              await sock.sendMessage(targetSendJid, { text: alertHeader });
+              await sock.sendMessage(targetSendJid, {
+                audio: buffer,
+                mimetype: rawDeletedMsg.audioMessage.mimetype || "audio/ogg; codecs=opus",
+                ptt: rawDeletedMsg.audioMessage.ptt || false
+              });
+            } 
+            // 5. Sticker එකක් නම්:
+            else if (rawDeletedMsg.stickerMessage) {
+              const buffer = await downloadMediaMessage(cached.msg, "buffer", {}, { logger: console });
+              await sock.sendMessage(targetSendJid, { text: alertHeader });
+              await sock.sendMessage(targetSendJid, { sticker: buffer });
+            } 
+            // 6. Fallback:
+            else {
+              await sock.sendMessage(targetSendJid, {
+                text: `${alertHeader}\n\n📝 *Content:*\n${deletedText || "_Unsupported Media_"}`
+              });
+            }
           } catch (delErr) {
             console.error("Anti-delete send error:", delErr.message);
           }
@@ -504,7 +556,6 @@ function initBot(sock) {
           await sock.sendPresenceUpdate("recording", from);
         } catch (e) {}
       } else {
-        // Off කර ඇති විට stuck වූ presence ක්ෂණිකව reset කර online තැබීම
         try {
           await sock.sendPresenceUpdate("paused", from);
           await sock.sendPresenceUpdate("available");
@@ -681,7 +732,7 @@ function initBot(sock) {
           "🥵": "https://files.catbox.moe/bfwnvj.opus",
           "🤤": "https://files.catbox.moe/bfwnvj.opus",
           "🍑": "https://files.catbox.moe/bfwnvj.opus",
-          "🫀": "https://files.catbox.moe/bke4vj.opus",
+          "𫀀": "https://files.catbox.moe/bke4vj.opus",
           "💔": "https://files.catbox.moe/bke4vj.opus",
           "🙇‍♂️": "https://files.catbox.moe/bke4vj.opus",
           "🥺": "https://files.catbox.moe/o5270o.opus",
@@ -764,7 +815,7 @@ function initBot(sock) {
           });
         } catch (cmdErr) {
           console.error(`❌ Execution error in ${commandName}:`, cmdErr);
-          await reply(`⚠️️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
+          await reply(`⚠️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
         }
       } else if (["ping", "speed", "p"].includes(commandName)) {
         try {
