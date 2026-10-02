@@ -353,7 +353,7 @@ function initBot(sock) {
 
       const isOwner = Boolean(isDev || isBotOwner);
 
-      // 🛑 LOOP FIX 1: බොට් තමන් විසින්ම යවන මැසේජ් වලින් auto run වීම නැවැත්වීම
+      // 🛑 LOOP FIX 1: බොට් තමන් විසින්ම යවන සාමාන්‍ය messages වලින් auto run වීම නැවැත්වීම
       if (msg.key.fromMe && !cleanBody.startsWith(settings?.prefix || ".")) {
         return;
       }
@@ -557,18 +557,147 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. EMOJI VOICE REACTION SYSTEM (.evoice on/off)
+         6. INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK / VIDEO 1, 2, 3)
+      ========================================================= */
+      if (quotedMsgId && ["1", "2", "3", "4"].includes(cleanBody)) {
+        
+        // 🔴 A. FACEBOOK DOWNLOAD HANDLER
+        if (global.fbSessions && global.fbSessions.has(quotedMsgId)) {
+          const fbSession = global.fbSessions.get(quotedMsgId);
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+          try {
+            if (cleanBody === "1") {
+              const vidUrl = fbSession.hd || fbSession.sd;
+              if (!vidUrl) throw new Error("HD Video link not found");
+              await sock.sendMessage(from, {
+                video: { url: vidUrl },
+                caption: `🎬 *${fbSession.title || "Facebook Video"}*\n⚡ *Quality:* HD\n\n> *${settings.botName}*`,
+                mimetype: "video/mp4"
+              }, { quoted: msg });
+            } else if (cleanBody === "2") {
+              const vidUrl = fbSession.sd || fbSession.hd;
+              if (!vidUrl) throw new Error("SD Video link not found");
+              await sock.sendMessage(from, {
+                video: { url: vidUrl },
+                caption: `🎬 *${fbSession.title || "Facebook Video"}*\n⚡ *Quality:* SD\n\n> *${settings.botName}*`,
+                mimetype: "video/mp4"
+              }, { quoted: msg });
+            } else if (cleanBody === "3") {
+              const audUrl = fbSession.audio || fbSession.sd;
+              await sock.sendMessage(from, {
+                audio: { url: audUrl },
+                mimetype: "audio/mp4",
+                fileName: "fb_audio.mp3"
+              }, { quoted: msg });
+            }
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            global.fbSessions.delete(quotedMsgId);
+            return;
+          } catch (fbErr) {
+            console.error("FB Download Error:", fbErr);
+            await reply(`❌ Facebook Media බාගත කිරීමේ දෝෂයක්: ${fbErr.message}`);
+            return;
+          }
+        }
+
+        // 🔴 B. SONG DOWNLOAD HANDLER
+        if (global.songSessions && global.songSessions.has(quotedMsgId)) {
+          const session = global.songSessions.get(quotedMsgId);
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+          try {
+            if (cleanBody === "1") {
+              await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/mp4", fileName: `${session.title}.mp3` }, { quoted: msg });
+            } else if (cleanBody === "2") {
+              await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
+            } else if (cleanBody === "3") {
+              const songRes = await axios.get(session.url, { responseType: "arraybuffer", timeout: 45000 });
+              const voiceBuf = await convertToWhatsAppVoice(Buffer.from(songRes.data));
+              await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
+            }
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            global.songSessions.delete(quotedMsgId);
+            return;
+          } catch (e) {
+            await reply("❌ Audio එක යැවීමේදී දෝෂයක් මතු විය.");
+            return;
+          }
+        }
+
+        // 🔴 C. TIKTOK DOWNLOAD HANDLER
+        if (global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
+          const ttSession = global.tiktokSessions.get(quotedMsgId);
+          await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+          try {
+            if (cleanBody === "1") {
+              await sock.sendMessage(from, { 
+                video: { url: ttSession.hdVideo || ttSession.sdVideo }, 
+                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality\n\n> *${settings.botName}*` 
+              }, { quoted: msg });
+            } else if (cleanBody === "2") {
+              await sock.sendMessage(from, { 
+                video: { url: ttSession.sdVideo || ttSession.hdVideo }, 
+                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality\n\n> *${settings.botName}*` 
+              }, { quoted: msg });
+            } else if (cleanBody === "3") {
+              const rawAudioRes = await axios.get(ttSession.audioUrl, { responseType: "arraybuffer", timeout: 30000 });
+              const voiceBuffer = await convertToWhatsAppVoice(Buffer.from(rawAudioRes.data));
+              await sock.sendMessage(from, { audio: voiceBuffer, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
+            }
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+            global.tiktokSessions.delete(quotedMsgId);
+            return;
+          } catch (e) {
+            await reply(`❌ TikTok Error: ${e.message}`);
+            return;
+          }
+        }
+
+        // 🔴 D. YOUTUBE VIDEO SELECTION HANDLER
+        if (global.videoSessions && global.videoSessions.has(quotedMsgId)) {
+          const vSession = global.videoSessions.get(quotedMsgId);
+          const qualityMap = { "1": "1080p", "2": "720p", "3": "480p", "4": "360p" };
+
+          if (qualityMap[cleanBody]) {
+            const selectedQuality = qualityMap[cleanBody];
+            await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+            try {
+              const apiKey = "chama_api_ec9848130d1aea209f08fb85e0b4720f";
+              const downloadApi = `https://api.chamindu.site/api/v1/youtube/download?url=${encodeURIComponent(vSession.url)}&quality=${selectedQuality}&format=mp4&api_key=${apiKey}`;
+
+              const qRes = await axios.get(downloadApi, { timeout: 45000 });
+              const qData = qRes.data?.data || qRes.data;
+              const finalDownloadUrl = qData?.download_url || qData?.direct_url;
+
+              if (finalDownloadUrl) {
+                await sock.sendMessage(from, {
+                  video: { url: finalDownloadUrl },
+                  caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *${settings.botName}*`,
+                  mimetype: "video/mp4"
+                }, { quoted: msg });
+                await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+                global.videoSessions.delete(quotedMsgId);
+                return;
+              }
+            } catch (e) {
+              await reply("❌ වීඩියෝව ලබාගත නොහැකි විය.");
+              return;
+            }
+          }
+        }
+      }
+
+      /* =========================================================
+         7. EMOJI VOICE REACTION SYSTEM (.evoice on/off)
       ========================================================= */
       if (global.evoiceEnabled === undefined) {
         try {
           const evData = await BotMeta.findOne({ key: "evoice_status" });
-          global.evoiceEnabled = evData ? Boolean(evData.value) : false; // Default: off
+          global.evoiceEnabled = evData ? Boolean(evData.value) : false;
         } catch (e) {
           global.evoiceEnabled = false;
         }
       }
 
-      // Prefix එකක් නොවන විට පමණක් Voice Reaction Trigger කිරීම
       const defaultPrefixes = [".", "!", "#", "/", "*", ","];
       const configuredPrefix = settings?.prefix || ".";
       const isCommandPattern = body.startsWith(configuredPrefix) || defaultPrefixes.some(p => body.startsWith(p));
@@ -602,12 +731,9 @@ function initBot(sock) {
 
         let targetAudio = null;
 
-        // 1. තනි emoji එකක් පමණක් එවූ විට
         if (emojiVoiceMap[cleanBody]) {
           targetAudio = emojiVoiceMap[cleanBody];
-        } 
-        // 2. වාක්‍යයක හෝ වචනයක අග ඇති emoji එක සඳහා (මැද තිබ්බොත් trigger නොවේ)
-        else {
+        } else {
           for (const emoji of Object.keys(emojiVoiceMap)) {
             if (cleanBody.endsWith(emoji)) {
               targetAudio = emojiVoiceMap[emoji];
@@ -639,7 +765,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         7. COMMAND ROUTING & PREFIX MATCHER
+         8. COMMAND ROUTING & PREFIX MATCHER
       ========================================================= */
       let matchedPrefix = null;
 
@@ -649,30 +775,7 @@ function initBot(sock) {
         matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
       }
 
-      // Prefix එකක් නැති විට Song/TikTok Sub-options පමණක් Handled කර Exit වීම
       if (!matchedPrefix) {
-        if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
-          const session = global.songSessions.get(quotedMsgId);
-          if (["1", "2", "3"].includes(cleanBody)) {
-            await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-            try {
-              if (cleanBody === "1") {
-                await sock.sendMessage(from, { audio: { url: session.url }, mimetype: "audio/mp4", fileName: `${session.title}.mp3` }, { quoted: msg });
-              } else if (cleanBody === "2") {
-                await sock.sendMessage(from, { document: { url: session.url }, mimetype: "audio/mpeg", fileName: `${session.title}.mp3` }, { quoted: msg });
-              } else if (cleanBody === "3") {
-                const songRes = await axios.get(session.url, { responseType: "arraybuffer", timeout: 45000 });
-                const voiceBuf = await convertToWhatsAppVoice(Buffer.from(songRes.data));
-                await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
-              }
-              await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-              return;
-            } catch (e) {
-              await reply("❌ Audio එක යැවීමේදී දෝෂයක් මතු විය.");
-              return;
-            }
-          }
-        }
         return;
       }
 
@@ -712,7 +815,7 @@ function initBot(sock) {
           const start = Date.now();
           const latency = Date.now() - start;
           const sent = await sock.sendMessage(from, { 
-            text: `⚡ *Pong!*\n⏱️️ Latency: *${latency}ms*\n🤖 *Bot:* ${settings.botName}` 
+            text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*\n🤖 *Bot:* ${settings.botName}` 
           }, { quoted: msg });
           if (sent?.key) await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
         } catch (e) {}
