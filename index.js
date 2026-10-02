@@ -86,6 +86,65 @@ const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://diniduheshan2007_db_user:SZD7sfcIU6Einajx@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
 
+/* =========================================================
+   SETTINGS SCHEMA & HELPER
+========================================================= */
+
+const BotSettingsSchema = new mongoose.Schema(
+  {
+    botNumber: { type: String, unique: true, required: true },
+    botName: { type: String, default: "DARK DINU MD" },
+    botLogo: { type: String, default: "https://files.catbox.moe/3fxa4u.jpeg" },
+    prefix: { type: String, default: "." },
+    workMode: { type: String, default: "public" }, // "public", "private", "inbox", "groups"
+    presence: { type: String, default: "off" },    // "off", "typing", "recording"
+    statusSeen: { type: Boolean, default: true },
+    statusReact: { type: String, default: "💚" },  // "off" or emoji
+    antiViewRoute: { type: String, default: "me" }, // "me", "from"
+    antiDeleteRoute: { type: String, default: "me" } // "me", "from"
+  },
+  { timestamps: true }
+);
+
+const BotSettingsModel =
+  mongoose.models.DarkDinuSettings ||
+  mongoose.model("DarkDinuSettings", BotSettingsSchema);
+
+const settingsCache = new Map();
+
+async function getBotSettings(botNumber) {
+  const cleanNumber = String(botNumber || "").replace(/[^0-9]/g, "");
+  if (!cleanNumber) return null;
+
+  if (settingsCache.has(cleanNumber)) {
+    return settingsCache.get(cleanNumber);
+  }
+
+  let config = await BotSettingsModel.findOne({ botNumber: cleanNumber });
+  if (!config) {
+    config = await BotSettingsModel.create({ botNumber: cleanNumber });
+  }
+
+  const data = config.toObject ? config.toObject() : config;
+  settingsCache.set(cleanNumber, data);
+  return data;
+}
+
+async function updateBotSettings(botNumber, updates) {
+  const cleanNumber = String(botNumber || "").replace(/[^0-9]/g, "");
+  if (!cleanNumber) return null;
+
+  const updated = await BotSettingsModel.findOneAndUpdate(
+    { botNumber: cleanNumber },
+    { $set: updates },
+    { new: true, upsert: true }
+  );
+
+  const data = updated.toObject ? updated.toObject() : updated;
+  settingsCache.set(cleanNumber, data);
+  return data;
+}
+
 const commandsDir = path.resolve(__dirname, "commands");
 if (!fs.existsSync(commandsDir)) {
   fs.mkdirSync(commandsDir, { recursive: true });
@@ -99,6 +158,7 @@ if (!global.tiktokSessions) global.tiktokSessions = new Map();
 if (!global.fbSessions) global.fbSessions = new Map();
 if (!global.videoSessions) global.videoSessions = new Map();
 if (!global.statusReactMap) global.statusReactMap = new Map();
+if (!global.settingSessions) global.settingSessions = new Map();
 if (!global.activeBotSockets) global.activeBotSockets = new Set();
 
 app.use(express.json());
@@ -201,26 +261,28 @@ function initBot(sock) {
           const userJid = `${rawUser}@s.whatsapp.net`;
           const devJid = `${DEVELOPER_NUMBER}@s.whatsapp.net`;
 
-          const botLogo = typeof botConfig.getRandomLogo === "function" 
-            ? botConfig.getRandomLogo() 
-            : (botConfig.BOT_LOGOS && botConfig.BOT_LOGOS[0]) || "https://files.catbox.moe/3fxa4u.jpeg";
+          const settings = await getBotSettings(rawUser);
+          const activeLogo = settings?.botLogo || (typeof botConfig.getRandomLogo === "function" ? botConfig.getRandomLogo() : "https://files.catbox.moe/3fxa4u.jpeg");
+          const activeName = settings?.botName || "DARK DINU MD";
+          const activePrefix = settings?.prefix || ".";
 
           const userCaption = 
-`╭───『 𝐃𝐀𝐑𝐊 𝐃𝐈𝐍𝐔 𝐌𝐃 』───◆
+`╭───『 ${activeName} 』───◆
 │
 │ 🩸 *STATUS:* Connected Successfully!
-│ ⚡ *PREFIX:* [ . / # ! ]
+│ ⚡ *PREFIX:* [ ${activePrefix} ]
+│ 🌐 *WORK MODE:* ${(settings?.workMode || "public").toUpperCase()}
 │ 👤 *USER:* +${rawUser}
 │ 👑 *DEVELOPER:* ${DEVELOPER_NAME}
 │ 📞 *DEV CONTACT:* +${DEVELOPER_NUMBER}
 │ 🌐 *ENGINE:* Baileys 24/7 Multi-Device
 │
 ╰───────────────────────◆
-> *DARK DINU is active! Type .ping to test speed.* 🔥`;
+> *DARK DINU is active! Type ${activePrefix}setting to configure.* 🔥`;
 
           try {
             await sock.sendMessage(userJid, {
-              image: { url: botLogo },
+              image: { url: activeLogo },
               caption: userCaption
             });
           } catch (e) {
@@ -232,7 +294,7 @@ function initBot(sock) {
             const devCaption = 
 `╭───『 🚨 NEW PAIR ALERT 』───◆
 │
-│ 🤖 *BOT:* DARK DINU MD
+│ 🤖 *BOT:* ${activeName}
 │ 👤 *NEW USER:* +${rawUser}
 │ 👑 *DEV:* ${DEVELOPER_NAME}
 │ 📅 *DATE:* ${new Date().toLocaleString("en-LK", { timeZone: "Asia/Colombo" })}
@@ -242,7 +304,7 @@ function initBot(sock) {
 
             try {
               await sock.sendMessage(devJid, {
-                image: { url: botLogo },
+                image: { url: activeLogo },
                 caption: devCaption
               });
             } catch (e) {
@@ -271,37 +333,29 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (!from) return;
 
+      const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
+      const settings = await getBotSettings(currentBotNumber);
+
+      // Status Broadcast Handler (Auto Read & Auto React via Settings)
       if (from === "status@broadcast") {
         try {
-          await sock.readMessages([msg.key]);
+          if (settings.statusSeen) {
+            await sock.readMessages([msg.key]);
+          }
 
           const senderJid = msg.key.participant || msg.participant;
-          const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
-
-          if (currentBotNumber && senderJid) {
-            let botEmoji = global.statusReactMap?.get(currentBotNumber);
-
-            if (!botEmoji) {
-              const savedMeta = await BotMeta.findOne({ key: `status_react_${currentBotNumber}` });
-              botEmoji = savedMeta ? savedMeta.value : "💚";
-              global.statusReactMap.set(currentBotNumber, botEmoji);
-            }
-
-            if (botEmoji !== "off") {
-              await sock.sendMessage(
-                senderJid,
-                { react: { text: botEmoji, key: msg.key } },
-                { statusJidList: [senderJid] }
-              );
-            }
+          if (settings.statusReact && settings.statusReact !== "off" && senderJid) {
+            await sock.sendMessage(
+              senderJid,
+              { react: { text: settings.statusReact, key: msg.key } },
+              { statusJidList: [senderJid] }
+            );
           }
         } catch (e) {}
         return;
       }
 
       const isGroup = from.endsWith("@g.us");
-      const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
-
       let sender = isGroup ? msg.key.participant : from;
       if (msg.key.fromMe) {
         sender = `${currentBotNumber}@s.whatsapp.net`;
@@ -331,6 +385,30 @@ function initBot(sock) {
       );
 
       const isOwner = Boolean(isDev || isBotOwner);
+
+      // Work Mode Protection
+      if (!isOwner) {
+        if (settings.workMode === "private") return;
+        if (settings.workMode === "groups" && !isGroup) return;
+        if (settings.workMode === "inbox" && isGroup) return;
+      }
+
+      // Fake Presence (Typing / Recording)
+      if (settings.presence === "typing") {
+        await sock.sendPresenceUpdate("composing", from);
+      } else if (settings.presence === "recording") {
+        await sock.sendPresenceUpdate("recording", from);
+      }
+
+      // Settings Reply Handler
+      if (quotedMsgId && global.settingSessions.has(quotedMsgId) && isOwner) {
+        const settingCmd = getCommand("setting");
+        if (settingCmd && typeof settingCmd.execute === "function") {
+          return await settingCmd.execute(sock, msg, [], from, {
+            reply, isOwner, cleanBody, body, sender, DEVELOPER_NAME, DEVELOPER_NUMBER, settings, updateBotSettings, getBotSettings
+          });
+        }
+      }
 
       // Song Handler
       if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
@@ -367,7 +445,7 @@ function initBot(sock) {
               if (!videoUrl) throw new Error("HD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
                 video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
+                caption: `🎬 *${ttSession.title}*\n⚡ HD Quality (No Watermark)\n\n> *${settings.botName} 🐦‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
             } else if (cleanBody === "2") {
@@ -375,7 +453,7 @@ function initBot(sock) {
               if (!videoUrl) throw new Error("SD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
                 video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*`, 
+                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *${settings.botName} 🐦‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
             } else if (cleanBody === "3") {
@@ -413,9 +491,9 @@ function initBot(sock) {
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
-              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.hd || fbSession.sd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "2") {
-              await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍🔥*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: fbSession.sd || fbSession.hd }, caption: `🎬 *${fbSession.title}*\n\n> *${settings.botName} 🐦‍🔥*` }, { quoted: msg });
             } else if (cleanBody === "3") {
               await sock.sendMessage(from, { audio: { url: fbSession.audio || fbSession.sd }, mimetype: "audio/mp4", fileName: "audio.mp3" }, { quoted: msg });
             }
@@ -447,7 +525,7 @@ function initBot(sock) {
             if (finalDownloadUrl) {
               await sock.sendMessage(from, {
                 video: { url: finalDownloadUrl },
-                caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *ᴅᴀʀᴋ ᴅɪɴᴜ ᴍᴅ 🐦‍‍🔥*`,
+                caption: `🎬 *${vSession.title}*\n⚡ *Quality:* ${selectedQuality}\n\n> *${settings.botName} 🐦‍🔥*`,
                 mimetype: "video/mp4"
               }, { quoted: msg });
               await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
@@ -471,8 +549,8 @@ function initBot(sock) {
         }
       }
 
-      const prefixesList = [".", "!", "#", "/"];
-      const isCmdStart = prefixesList.some(p => cleanBody.startsWith(p));
+      const defaultPrefixes = [".", "!", "#", "/"];
+      const isCmdStart = defaultPrefixes.some(p => cleanBody.startsWith(p)) || (settings.prefix && cleanBody.startsWith(settings.prefix));
 
       if (global.evoiceEnabled && cleanBody && !isCmdStart) {
         const emojiVoiceMap = {
@@ -535,35 +613,49 @@ function initBot(sock) {
         }
       }
 
-      const prefix = prefixesList.find(p => body.startsWith(p));
-      if (!prefix) return;
+      // Dynamic Prefix Resolution
+      const configuredPrefix = settings.prefix || ".";
+      let matchedPrefix = null;
 
-      const args = body.slice(prefix.length).trim().split(/ +/);
+      if (body.startsWith(configuredPrefix)) {
+        matchedPrefix = configuredPrefix;
+      } else {
+        matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
+      }
+
+      if (!matchedPrefix) return;
+
+      const args = body.slice(matchedPrefix.length).trim().split(/ +/);
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: .${commandName} | From: ${from} | Sender: ${senderClean}`);
+      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | From: ${from} | Bot: +${currentBotNumber}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
         try {
           await targetCommand.execute(sock, msg, args, from, {
             body,
-            prefix,
+            cleanBody,
+            prefix: matchedPrefix,
             sender,
             isOwner,
             isDev,
             isBotOwner,
             isGroup,
             reply,
+            settings,
+            currentBotNumber,
+            updateBotSettings,
+            getBotSettings,
             DEVELOPER_NAME,
             DEVELOPER_NUMBER,
             DEVELOPER_LID,
             botConfig
           });
         } catch (cmdErr) {
-          console.error(`❌ Execution error in .${commandName}:`, cmdErr);
-          await reply(`⚠️ Error executing *.${commandName}*:\n_${cmdErr.message}_`);
+          console.error(`❌ Execution error in ${commandName}:`, cmdErr);
+          await reply(`⚠️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
         }
       } else if (["ping", "speed", "p"].includes(commandName)) {
         try {
@@ -571,7 +663,7 @@ function initBot(sock) {
           const start = Date.now();
           const latency = Date.now() - start;
           const sent = await sock.sendMessage(from, { 
-            text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*` 
+            text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*\n🤖 *Bot:* ${settings.botName}` 
           }, { quoted: msg });
           if (sent?.key) await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
         } catch (e) {}
