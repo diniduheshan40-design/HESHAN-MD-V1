@@ -228,7 +228,6 @@ function extractMessageBody(msg) {
 function initBot(sock) {
   if (!sock || !sock.ev) return;
   
-  // වැදගත්: එක Socket එකකට Listener දෙපාරක් වැටීම වැළැක්වීම
   if (sock._isInitialized) return;
   sock._isInitialized = true;
 
@@ -354,7 +353,7 @@ function initBot(sock) {
 
       const isOwner = Boolean(isDev || isBotOwner);
 
-      // 🛑 LOOP FIX 1: බොට් තමන් විසින්ම යවන මැසේජ් වලින් ආයෙත් Commands Run වීම නැවැත්වීම
+      // 🛑 LOOP FIX 1: බොට් තමන් විසින්ම යවන මැසේජ් වලින් auto run වීම නැවැත්වීම
       if (msg.key.fromMe && !cleanBody.startsWith(settings?.prefix || ".")) {
         return;
       }
@@ -450,7 +449,7 @@ function initBot(sock) {
       /* =========================================================
          2. ANTI-VIEWONCE & EMOJI TRIGGER
       ========================================================= */
-      const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤️️", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
+      const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
       const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       const isEmojiReplyVO = quotedMsg && antiViewEmojis.includes(cleanBody) && (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage);
       const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage || (isEmojiReplyVO ? (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage) : null);
@@ -558,10 +557,90 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. COMMAND ROUTING & PREFIX MATCHER
+         6. EMOJI VOICE REACTION SYSTEM (.evoice on/off)
       ========================================================= */
+      if (global.evoiceEnabled === undefined) {
+        try {
+          const evData = await BotMeta.findOne({ key: "evoice_status" });
+          global.evoiceEnabled = evData ? Boolean(evData.value) : false; // Default: off
+        } catch (e) {
+          global.evoiceEnabled = false;
+        }
+      }
+
+      // Prefix එකක් නොවන විට පමණක් Voice Reaction Trigger කිරීම
       const defaultPrefixes = [".", "!", "#", "/", "*", ","];
       const configuredPrefix = settings?.prefix || ".";
+      const isCommandPattern = body.startsWith(configuredPrefix) || defaultPrefixes.some(p => body.startsWith(p));
+
+      if (global.evoiceEnabled && cleanBody && !isCommandPattern) {
+        const emojiVoiceMap = {
+          "🙏": "https://files.catbox.moe/1e2359.opus",
+          "☸️": "https://files.catbox.moe/1e2359.opus",
+          "☸": "https://files.catbox.moe/1e2359.opus",
+          "🌹": "https://files.catbox.moe/uxm1re.opus",
+          "💆‍♂️": "https://files.catbox.moe/uxm1re.opus",
+          "😅": "https://files.catbox.moe/cvv435.opus",
+          "🤣": "https://files.catbox.moe/cvv435.opus",
+          "😂": "https://files.catbox.moe/cvv435.opus",
+          "🫢": "https://files.catbox.moe/i2uw0g.opus",
+          "🌚": "https://files.catbox.moe/i2uw0g.opus",
+          "💇‍♂️": "https://files.catbox.moe/i2uw0g.opus",
+          "🫣": "https://files.catbox.moe/oqfsdl.opus",
+          "🤪": "https://files.catbox.moe/oqfsdl.opus",
+          "😜": "https://files.catbox.moe/oqfsdl.opus",
+          "🥵": "https://files.catbox.moe/bfwnvj.opus",
+          "🤤": "https://files.catbox.moe/bfwnvj.opus",
+          "🍑": "https://files.catbox.moe/bfwnvj.opus",
+          "🫀": "https://files.catbox.moe/bke4vj.opus",
+          "💔": "https://files.catbox.moe/bke4vj.opus",
+          "🙇‍♂️": "https://files.catbox.moe/bke4vj.opus",
+          "🥺": "https://files.catbox.moe/o5270o.opus",
+          "😭": "https://files.catbox.moe/o5270o.opus",
+          "🥹": "https://files.catbox.moe/o5270o.opus"
+        };
+
+        let targetAudio = null;
+
+        // 1. තනි emoji එකක් පමණක් එවූ විට
+        if (emojiVoiceMap[cleanBody]) {
+          targetAudio = emojiVoiceMap[cleanBody];
+        } 
+        // 2. වාක්‍යයක හෝ වචනයක අග ඇති emoji එක සඳහා (මැද තිබ්බොත් trigger නොවේ)
+        else {
+          for (const emoji of Object.keys(emojiVoiceMap)) {
+            if (cleanBody.endsWith(emoji)) {
+              targetAudio = emojiVoiceMap[emoji];
+              break;
+            }
+          }
+        }
+
+        if (targetAudio) {
+          try {
+            const audioStream = await axios.get(targetAudio, {
+              responseType: "arraybuffer",
+              timeout: 25000,
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+            });
+
+            const voiceBuf = await convertToWhatsAppVoice(Buffer.from(audioStream.data));
+
+            await sock.sendMessage(from, {
+              audio: voiceBuf,
+              mimetype: "audio/ogg; codecs=opus",
+              ptt: true
+            }, { quoted: msg });
+            return;
+          } catch (evErr) {
+            console.error("Emoji Voice Send Error:", evErr.message);
+          }
+        }
+      }
+
+      /* =========================================================
+         7. COMMAND ROUTING & PREFIX MATCHER
+      ========================================================= */
       let matchedPrefix = null;
 
       if (body.startsWith(configuredPrefix)) {
@@ -570,9 +649,8 @@ function initBot(sock) {
         matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
       }
 
-      // 🛑 LOOP FIX 3: නිකන් අංක ගහද්දි Menu එක open වීම සහ auto command trigger වීම වැළැක්වීම
+      // Prefix එකක් නැති විට Song/TikTok Sub-options පමණක් Handled කර Exit වීම
       if (!matchedPrefix) {
-        // Song / Menu Sub-options Reply නම් පමණක් ඉදිරියට යැවීම
         if (quotedMsgId && global.songSessions && global.songSessions.has(quotedMsgId)) {
           const session = global.songSessions.get(quotedMsgId);
           if (["1", "2", "3"].includes(cleanBody)) {
@@ -634,7 +712,7 @@ function initBot(sock) {
           const start = Date.now();
           const latency = Date.now() - start;
           const sent = await sock.sendMessage(from, { 
-            text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*\n🤖 *Bot:* ${settings.botName}` 
+            text: `⚡ *Pong!*\n⏱️️ Latency: *${latency}ms*\n🤖 *Bot:* ${settings.botName}` 
           }, { quoted: msg });
           if (sent?.key) await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
         } catch (e) {}
