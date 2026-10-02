@@ -36,6 +36,8 @@ const https = require("https");
 const axios = require("axios");
 const { exec } = require("child_process");
 
+const { downloadMediaMessage } = require("@whiskeysockets/baileys");
+
 let ffmpegPath = "ffmpeg";
 try {
   const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
@@ -130,21 +132,6 @@ async function getBotSettings(botNumber) {
   return data;
 }
 
-async function updateBotSettings(botNumber, updates) {
-  const cleanNumber = String(botNumber || "").replace(/[^0-9]/g, "");
-  if (!cleanNumber) return null;
-
-  const updated = await BotSettingsModel.findOneAndUpdate(
-    { botNumber: cleanNumber },
-    { $set: updates },
-    { new: true, upsert: true }
-  );
-
-  const data = updated.toObject ? updated.toObject() : updated;
-  settingsCache.set(cleanNumber, data);
-  return data;
-}
-
 const commandsDir = path.resolve(__dirname, "commands");
 if (!fs.existsSync(commandsDir)) {
   fs.mkdirSync(commandsDir, { recursive: true });
@@ -153,11 +140,12 @@ if (!fs.existsSync(commandsDir)) {
 let activeSocket = null;
 let pairingInProgress = false;
 
+// Global Memory Caches (Anti-delete message memory & sessions)
+if (!global.msgStore) global.msgStore = new Map();
 if (!global.songSessions) global.songSessions = new Map();
 if (!global.tiktokSessions) global.tiktokSessions = new Map();
 if (!global.fbSessions) global.fbSessions = new Map();
 if (!global.videoSessions) global.videoSessions = new Map();
-if (!global.statusReactMap) global.statusReactMap = new Map();
 if (!global.settingSessions) global.settingSessions = new Map();
 if (!global.activeBotSockets) global.activeBotSockets = new Set();
 
@@ -334,9 +322,104 @@ function initBot(sock) {
       if (!from) return;
 
       const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
+      const ownerJid = `${currentBotNumber}@s.whatsapp.net`;
       const settings = await getBotSettings(currentBotNumber);
 
-      // Status Broadcast Handler (Auto Read & Auto React via Settings)
+      /* =========================================================
+         1. ANTI-DELETE STORE CACHING (Save recent messages)
+      ========================================================= */
+      if (msg.key.id && !msg.key.fromMe) {
+        global.msgStore.set(msg.key.id, {
+          msg,
+          from,
+          sender: msg.key.participant || from,
+          pushName: msg.pushName || "User",
+          time: new Date()
+        });
+
+        // Memory cleanup: keep max 1000 messages in RAM
+        if (global.msgStore.size > 1000) {
+          const firstKey = global.msgStore.keys().next().value;
+          global.msgStore.delete(firstKey);
+        }
+      }
+
+      /* =========================================================
+         2. ANTI-DELETE DETECTION (Protocol Revoke)
+      ========================================================= */
+      const protocolMsg = msg.message?.protocolMessage;
+      if (protocolMsg && protocolMsg.type === 0) { // 0 = Revoke / Delete
+        const deletedId = protocolMsg.key?.id;
+        if (deletedId && global.msgStore.has(deletedId)) {
+          const cached = global.msgStore.get(deletedId);
+          const targetSendJid = settings.antiDeleteRoute === "me" ? ownerJid : cached.from;
+          const senderNum = (cached.sender || "").split("@")[0].replace(/[^0-9]/g, "");
+
+          const alertHeader = 
+`╭───『 🗑️ 𝐀𝐍𝐓𝐈-𝐃𝐄𝐋𝐄𝐓𝐄 𝐀𝐋𝐄𝐑𝐓 』───◆
+│
+│ 👤 *Sender:* +${senderNum} (${cached.pushName})
+│ 💬 *Chat:* ${cached.from.endsWith("@g.us") ? "Group Chat" : "Private Chat"}
+│ ⏰ *Time:* ${cached.time.toLocaleTimeString("en-LK", { timeZone: "Asia/Colombo" })}
+│
+╰───────────────────────────────◆
+> *Deleted Content:* 👇`;
+
+          try {
+            await sock.sendMessage(targetSendJid, { text: alertHeader });
+            await sock.copyNForward(targetSendJid, cached.msg, false);
+          } catch (delErr) {
+            console.error("Anti-delete send error:", delErr.message);
+          }
+          return;
+        }
+      }
+
+      /* =========================================================
+         3. ANTI-VIEWONCE HANDLER
+      ========================================================= */
+      const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage;
+      if (viewOnce && !msg.key.fromMe) {
+        const targetViewJid = settings.antiViewRoute === "me" ? ownerJid : from;
+        const senderNum = (msg.key.participant || from).split("@")[0].replace(/[^0-9]/g, "");
+
+        try {
+          const innerMsg = viewOnce.message;
+          const isImg = Boolean(innerMsg.imageMessage);
+          const mediaMsg = isImg ? innerMsg.imageMessage : innerMsg.videoMessage;
+
+          if (mediaMsg) {
+            const buffer = await downloadMediaMessage(
+              { key: msg.key, message: innerMsg },
+              "buffer",
+              {},
+              { logger: console }
+            );
+
+            const caption = 
+`╭───『 👁️ 𝐀𝐍𝐓𝐈-𝐕𝐈𝐄𝐖𝐎𝐍𝐂𝐄 』───◆
+│
+│ 👤 *Sender:* +${senderNum}
+│ 📁 *Type:* ${isImg ? "Photo" : "Video"}
+│ 📝 *Caption:* ${mediaMsg.caption || "No caption"}
+│
+╰─────────────────────────◆
+> *${settings.botName}*`;
+
+            if (isImg) {
+              await sock.sendMessage(targetViewJid, { image: buffer, caption });
+            } else {
+              await sock.sendMessage(targetViewJid, { video: buffer, caption });
+            }
+          }
+        } catch (voErr) {
+          console.error("Anti-ViewOnce error:", voErr.message);
+        }
+      }
+
+      /* =========================================================
+         4. STATUS BROADCAST HANDLER (Auto Read & React)
+      ========================================================= */
       if (from === "status@broadcast") {
         try {
           if (settings.statusSeen) {
@@ -386,14 +469,18 @@ function initBot(sock) {
 
       const isOwner = Boolean(isDev || isBotOwner);
 
-      // Work Mode Protection
+      /* =========================================================
+         5. WORK MODE PROTECTION
+      ========================================================= */
       if (!isOwner) {
         if (settings.workMode === "private") return;
         if (settings.workMode === "groups" && !isGroup) return;
         if (settings.workMode === "inbox" && isGroup) return;
       }
 
-      // Fake Presence (Typing / Recording)
+      /* =========================================================
+         6. FAKE PRESENCE (Auto Typing / Recording)
+      ========================================================= */
       if (settings.presence === "typing") {
         await sock.sendPresenceUpdate("composing", from);
       } else if (settings.presence === "recording") {
@@ -405,7 +492,7 @@ function initBot(sock) {
         const settingCmd = getCommand("setting");
         if (settingCmd && typeof settingCmd.execute === "function") {
           return await settingCmd.execute(sock, msg, [], from, {
-            reply, isOwner, cleanBody, body, sender, DEVELOPER_NAME, DEVELOPER_NUMBER, settings, updateBotSettings, getBotSettings
+            reply, isOwner, cleanBody, body, sender, DEVELOPER_NAME, DEVELOPER_NUMBER
           });
         }
       }
@@ -453,7 +540,7 @@ function initBot(sock) {
               if (!videoUrl) throw new Error("SD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
                 video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *${settings.botName} 🐦‍🔥*`, 
+                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *${settings.botName} 🐦‍‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
             } else if (cleanBody === "3") {
@@ -613,7 +700,7 @@ function initBot(sock) {
         }
       }
 
-      // Dynamic Prefix Resolution
+      // Dynamic Prefix Matcher
       const configuredPrefix = settings.prefix || ".";
       let matchedPrefix = null;
 
@@ -646,8 +733,6 @@ function initBot(sock) {
             reply,
             settings,
             currentBotNumber,
-            updateBotSettings,
-            getBotSettings,
             DEVELOPER_NAME,
             DEVELOPER_NUMBER,
             DEVELOPER_LID,
