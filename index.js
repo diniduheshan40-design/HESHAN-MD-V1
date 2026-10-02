@@ -241,6 +241,14 @@ function initBot(sock) {
     if (connection === "open") {
       console.log("\x1b[32m%s\x1b[0m", "🎉 [DARK DINU] WhatsApp Connected Successfully!");
 
+      // Keep Alive: නිතරම Online බව WhatsApp server එකට තහවුරු කිරීම (Always Online Fix)
+      if (sock.presenceInterval) clearInterval(sock.presenceInterval);
+      sock.presenceInterval = setInterval(async () => {
+        try {
+          await sock.sendPresenceUpdate("available");
+        } catch (e) {}
+      }, 15000);
+
       setTimeout(async () => {
         try {
           if (!sock.user) return;
@@ -309,6 +317,10 @@ function initBot(sock) {
           console.error("⚠️ Connection message error:", err.message);
         }
       }, 2500);
+    }
+
+    if (connection === "close") {
+      if (sock.presenceInterval) clearInterval(sock.presenceInterval);
     }
   });
 
@@ -479,12 +491,22 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. FAKE PRESENCE (Auto Typing / Recording)
+         6. FAKE PRESENCE (Auto Typing / Recording & Keep Online Fix)
       ========================================================= */
       if (settings.presence === "typing") {
-        await sock.sendPresenceUpdate("composing", from);
+        try {
+          await sock.presenceSubscribe(from);
+          await sock.sendPresenceUpdate("composing", from);
+        } catch (e) {}
       } else if (settings.presence === "recording") {
-        await sock.sendPresenceUpdate("recording", from);
+        try {
+          await sock.presenceSubscribe(from);
+          await sock.sendPresenceUpdate("recording", from);
+        } catch (e) {}
+      } else {
+        try {
+          await sock.sendPresenceUpdate("available");
+        } catch (e) {}
       }
 
       // Settings Reply Handler
@@ -540,7 +562,7 @@ function initBot(sock) {
               if (!videoUrl) throw new Error("SD Video Link හමු නොවීය.");
               await sock.sendMessage(from, { 
                 video: { url: videoUrl }, 
-                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *${settings.botName} 🐦‍‍🔥*`, 
+                caption: `🎬 *${ttSession.title}*\n⚡ SD Quality (Data Saver)\n\n> *${settings.botName} 🐦‍🔥*`, 
                 mimetype: "video/mp4" 
               }, { quoted: msg });
             } else if (cleanBody === "3") {
