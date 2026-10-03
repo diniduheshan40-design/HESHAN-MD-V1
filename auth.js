@@ -13,7 +13,6 @@ const {
   fetchLatestBaileysVersion
 } = require("@whiskeysockets/baileys");
 
-// Silent logger prevents console flood on temporary decrypt glitches
 const logger = pino({ level: "silent" });
 const baseSessionDir = path.join(__dirname, "sessions");
 
@@ -200,7 +199,7 @@ async function removeSession(sessionId, sessionDir) {
 }
 
 /* =========================================================
-   CREATE BAILEYS SOCKET (FIXED FOR BAD MAC / DESYNC)
+   CREATE BAILEYS SOCKET
 ========================================================= */
 
 let cachedVersion = null;
@@ -218,7 +217,6 @@ async function createMultiSocket(sessionId, phoneNumber) {
     }
   }
 
-  // Socket-specific retry cache prevents Bad MAC deadlocks
   if (!global.sessionRetryCache.has(sessionId)) {
     global.sessionRetryCache.set(sessionId, new Map());
   }
@@ -243,7 +241,6 @@ async function createMultiSocket(sessionId, phoneNumber) {
     msgRetryCounterCache,
     retryRequestDelayMs: 2500,
     maxMsgRetryCount: 5,
-    // Safely bypass broken messages without killing session
     getMessage: async (key) => {
       return { conversation: "" };
     }
@@ -301,7 +298,6 @@ async function createMultiSocket(sessionId, phoneNumber) {
         const statusCode = getDisconnectCode(lastDisconnect);
         global.activeBotSockets.delete(sock);
 
-        // Actual logged out check (prevent accidental deletions)
         if (statusCode === DisconnectReason.loggedOut) {
           const retries = reconnectRetries.get(sessionId) || 0;
           if (retries < 2) {
@@ -320,7 +316,6 @@ async function createMultiSocket(sessionId, phoneNumber) {
           return;
         }
 
-        // WhatsApp 515 Restart Request
         if (statusCode === DisconnectReason.restartRequired) {
           try {
             await saveCreds();
@@ -337,7 +332,6 @@ async function createMultiSocket(sessionId, phoneNumber) {
           return;
         }
 
-        // Auto reconnect for server wakeups / network switches
         if (global.allActiveSessions.get(sessionId) === sock) {
           global.allActiveSessions.delete(sessionId);
         }
