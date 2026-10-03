@@ -132,6 +132,12 @@ async function getBotSettings(botNumber) {
   return data;
 }
 
+const MetaSchema = new mongoose.Schema({
+  key: { type: String, unique: true },
+  value: mongoose.Schema.Types.Mixed
+});
+const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
+
 const commandsDir = path.resolve(__dirname, "commands");
 if (!fs.existsSync(commandsDir)) {
   fs.mkdirSync(commandsDir, { recursive: true });
@@ -149,12 +155,6 @@ if (!global.activeBotSockets) global.activeBotSockets = new Set();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-const MetaSchema = new mongoose.Schema({
-  key: { type: String, unique: true },
-  value: mongoose.Schema.Types.Mixed
-});
-const BotMeta = mongoose.models.DarkDinuMeta || mongoose.model("DarkDinuMeta", MetaSchema);
 
 const commands = new Map();
 const aliases = new Map();
@@ -242,6 +242,9 @@ function initBot(sock) {
       const currentBotNum = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
       console.log("\x1b[32m%s\x1b[0m", `🎉 [DARK DINU] WhatsApp Connected: +${currentBotNum}`);
 
+      /* =========================================================
+         🌟 CONNECTING MESSAGE LOGIC (අලුත් අයට Dev Alert + User Msg / පරණ අයට User Msg විතරයි)
+      ========================================================= */
       setTimeout(async () => {
         try {
           if (!sock.user) return;
@@ -255,9 +258,8 @@ function initBot(sock) {
           const activeName = settings?.botName || "DARK DINU MD";
           const activePrefix = settings?.prefix || ".";
 
-          const checkMeta = await BotMeta.findOne({ key: `paired_${rawUser}` });
-          if (!checkMeta || !checkMeta.value) {
-            const userCaption = 
+          // User ට හැමවෙලේම Connect වූ විට Message එක යැවීම
+          const userCaption = 
 `╭───『 ${activeName} 』───◆
 │
 │ 🩸 *STATUS:* Connected Successfully!
@@ -270,35 +272,44 @@ function initBot(sock) {
 ╰───────────────────────◆
 > *DARK DINU is active! Type ${activePrefix}setting to configure.* 🔥`;
 
-            try {
-              await sock.sendMessage(userJid, { image: { url: activeLogo }, caption: userCaption });
-            } catch (e) {
-              await sock.sendMessage(userJid, { text: userCaption });
-            }
+          try {
+            await sock.sendMessage(userJid, { image: { url: activeLogo }, caption: userCaption });
+          } catch (e) {
+            await sock.sendMessage(userJid, { text: userCaption });
+          }
 
-            const devCaption = 
-`╭───『 🚨 NEW PAIR ALERT 』───◆
+          // DB එකෙන් Check කරනවා මේ User කලින් හිටපු කෙනෙක්ද කියලා
+          const checkUserMeta = await BotMeta.findOne({ key: `user_registered_${rawUser}` });
+
+          // අලුත්ම කෙනෙක් නම් පමණක් Developer ට Alert එක යැවීම
+          if (!checkUserMeta) {
+            if (rawUser !== DEVELOPER_NUMBER) {
+              const devCaption = 
+`╭───『 🚨 NEW USER DEPLOYED 』───◆
 │
 │ 🤖 *BOT:* ${activeName}
 │ 👤 *NEW USER:* +${rawUser}
 │ 👑 *DEV:* ${DEVELOPER_NAME}
 │ 📅 *DATE:* ${new Date().toLocaleString("en-LK", { timeZone: "Asia/Colombo" })}
-│ 🚀 *STATUS:* Link Device Successful!
+│ 🚀 *STATUS:* First Time Deployment!
 │
 ╰──────────────────────────◆`;
 
-            try {
-              await sock.sendMessage(devJid, { image: { url: activeLogo }, caption: devCaption });
-            } catch (e) {
-              await sock.sendMessage(devJid, { text: devCaption });
+              try {
+                await sock.sendMessage(devJid, { image: { url: activeLogo }, caption: devCaption });
+              } catch (e) {
+                await sock.sendMessage(devJid, { text: devCaption });
+              }
             }
 
+            // අලුත් කෙනා පරණ කෙනෙක් විදිහට DB එකේ සටහන් කරගැනීම (ඊළඟ පාර Alert නොඑන්න)
             await BotMeta.findOneAndUpdate(
-              { key: `paired_${rawUser}` },
+              { key: `user_registered_${rawUser}` },
               { value: true },
               { upsert: true }
             );
           }
+
         } catch (err) {
           console.error("⚠️ Connection message error:", err.message);
         }
@@ -315,21 +326,18 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (!from) return;
 
-      // Extract Current Bot Number cleanly
       const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
       const ownerJid = `${currentBotNumber}@s.whatsapp.net`;
       const settings = await getBotSettings(currentBotNumber);
 
       const isGroup = from.endsWith("@g.us");
 
-      // Accurately extract sender
       let sender = isGroup ? (msg.key.participant || msg.participant) : from;
       if (msg.key.fromMe) {
         sender = ownerJid;
       }
       const senderClean = String(sender || "").split("@")[0].split(":")[0].replace(/[^0-9]/g, "");
 
-      // 🌟 ROBUST ACCESS ROLES
       const isDev = Boolean(
         senderClean === DEVELOPER_NUMBER ||
         senderClean === DEVELOPER_LID ||
@@ -337,7 +345,6 @@ function initBot(sock) {
         sender?.includes(DEVELOPER_LID)
       );
 
-      // Bot Owner: fromMe නම් හෝ sender අංකය බොට්ගේ අංකයට සමාන නම් 100% Owner ලෙස සලකයි!
       const isBotOwner = Boolean(
         msg.key.fromMe ||
         senderClean === currentBotNumber
@@ -354,7 +361,6 @@ function initBot(sock) {
 
       /* =========================================================
          ⭐ 1. INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK / YT 1, 2, 3)
-         ඕනෑම user කෙනෙක් (Bot Owner, Group Member, Dev) අංක reply කළ විගස Run වේ!
       ========================================================= */
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
@@ -562,52 +568,71 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         3. ANTI-VIEWONCE & EMOJI TRIGGER
+         ⭐ 3. ANTI-VIEWONCE & EMOJI TRIGGER (100% FIXED & STABLE)
       ========================================================= */
       const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
-      const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-      const isEmojiReplyVO = quotedMsg && antiViewEmojis.includes(cleanBody) && (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage);
-      const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage || (isEmojiReplyVO ? (quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage) : null);
+      const quotedMsgRaw = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+      const isEmojiReplyVO = quotedMsgRaw && antiViewEmojis.includes(cleanBody) && (quotedMsgRaw.viewOnceMessageV2 || quotedMsgRaw.viewOnceMessage);
 
-      if (viewOnce && (!msg.key.fromMe || isEmojiReplyVO)) {
+      // Extract ViewOnce Target properly
+      let voTarget = null;
+      let isReplyMode = false;
+
+      if (msg.message?.viewOnceMessageV2) {
+        voTarget = msg.message.viewOnceMessageV2.message;
+      } else if (msg.message?.viewOnceMessage) {
+        voTarget = msg.message.viewOnceMessage.message;
+      } else if (isEmojiReplyVO) {
+        const qm = quotedMsgRaw.viewOnceMessageV2 || quotedMsgRaw.viewOnceMessage;
+        voTarget = qm.message;
+        isReplyMode = true;
+      }
+
+      if (voTarget && (!msg.key.fromMe || isReplyMode)) {
         const targetViewJid = settings.antiViewRoute === "me" ? ownerJid : from;
-        const senderNum = (msg.key.participant || from).split("@")[0].replace(/[^0-9]/g, "");
+        const senderNum = (msg.key.participant || from).split("@")[0].split(":")[0].replace(/[^0-9]/g, "");
 
         try {
-          const innerMsg = viewOnce.message;
-          const isImg = Boolean(innerMsg.imageMessage);
-          const mediaMsg = isImg ? innerMsg.imageMessage : innerMsg.videoMessage;
+          const isImg = Boolean(voTarget.imageMessage);
+          const isVid = Boolean(voTarget.videoMessage);
 
-          if (mediaMsg) {
-            const voMsgContext = isEmojiReplyVO ? {
-              key: {
+          if (isImg || isVid) {
+            const mediaType = isImg ? "image" : "video";
+            const mediaObj = isImg ? voTarget.imageMessage : voTarget.videoMessage;
+
+            // Construct proper fake Baileys structure for downloader
+            const fakeMessageToDownload = {
+              key: isReplyMode ? {
                 remoteJid: from,
                 id: msg.message.extendedTextMessage.contextInfo.stanzaId,
                 participant: msg.message.extendedTextMessage.contextInfo.participant
-              },
-              message: innerMsg
-            } : { key: msg.key, message: innerMsg };
+              } : msg.key,
+              message: voTarget
+            };
 
-            const buffer = await downloadMediaMessage(voMsgContext, "buffer", {}, { logger: console });
+            const buffer = await downloadMediaMessage(fakeMessageToDownload, "buffer", {}, { logger: console });
 
             const caption = 
 `╭───『 👁️ 𝐀𝐍𝐓𝐈-𝐕𝐈𝐄𝐖𝐎𝐍𝐂𝐄 』───◆
 │
 │ 👤 *Sender:* +${senderNum}
 │ 📁 *Type:* ${isImg ? "Photo" : "Video"}
-│ 📝 *Caption:* ${mediaMsg.caption || "No caption"}
+│ 📝 *Caption:* ${mediaObj.caption || "No caption"}
 │
 ╰─────────────────────────◆
 > *${settings.botName}*`;
 
             if (isImg) {
-              await sock.sendMessage(targetViewJid, { image: buffer, caption });
+              await sock.sendMessage(targetViewJid, { image: buffer, caption }, { quoted: msg });
             } else {
-              await sock.sendMessage(targetViewJid, { video: buffer, caption });
+              await sock.sendMessage(targetViewJid, { video: buffer, caption }, { quoted: msg });
             }
-            if (isEmojiReplyVO) return;
+
+            if (isReplyMode) return;
           }
-        } catch (voErr) {}
+        } catch (voErr) {
+          console.error("❌ Anti-ViewOnce Processing Error:", voErr.message);
+        }
       }
 
       /* =========================================================
@@ -632,7 +657,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         5. WORK MODE PROTECTION (STRICTLY FOR PUBLIC/PRIVATE)
+         5. WORK MODE PROTECTION
       ========================================================= */
       if (!isOwner) {
         const mode = (settings?.workMode || "public").toLowerCase();
@@ -675,12 +700,7 @@ function initBot(sock) {
          7. EMOJI VOICE REACTION SYSTEM (.evoice on/off)
       ========================================================= */
       if (global.evoiceEnabled === undefined) {
-        try {
-          const evData = await BotMeta.findOne({ key: "evoice_status" });
-          global.evoiceEnabled = evData ? Boolean(evData.value) : false;
-        } catch (e) {
-          global.evoiceEnabled = false;
-        }
+        global.evoiceEnabled = false;
       }
 
       const defaultPrefixes = [".", "!", "#", "/", "*", ","];
@@ -760,7 +780,6 @@ function initBot(sock) {
         matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
       }
 
-      // Prefix එකක් නැත්නම් return වේ
       if (!matchedPrefix) {
         return;
       }
@@ -793,7 +812,7 @@ function initBot(sock) {
           });
         } catch (cmdErr) {
           console.error(`❌ Execution error in ${commandName}:`, cmdErr);
-          await reply(`⚠️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
+          await reply(`⚠️️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
         }
       } else if (["ping", "speed", "p"].includes(commandName)) {
         try {
