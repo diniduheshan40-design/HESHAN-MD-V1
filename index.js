@@ -146,6 +146,11 @@ if (!fs.existsSync(commandsDir)) {
 let pairingInProgress = false;
 
 if (!global.msgStore) global.msgStore = new Map();
+if (!global.songSessions) global.songSessions = new Map();
+if (!global.tiktokSessions) global.tiktokSessions = new Map();
+if (!global.fbSessions) global.fbSessions = new Map();
+if (!global.videoSessions) global.videoSessions = new Map();
+if (!global.settingSessions) global.settingSessions = new Map();
 if (!global.activeBotSockets) global.activeBotSockets = new Set();
 
 app.use(express.json());
@@ -220,10 +225,6 @@ function extractMessageBody(msg) {
   ).trim();
 }
 
-/* =========================================================
-   PER-BOT ISOLATION WRAPPER
-========================================================= */
-
 function initBot(sock) {
   if (!sock || !sock.ev) return;
   if (sock._isInitialized) return;
@@ -233,19 +234,12 @@ function initBot(sock) {
     global.activeBotSockets.add(sock);
   }
 
-  // Session Stores per Socket (Prevents cross-firing between bots)
-  sock.songSessions = new Map();
-  sock.tiktokSessions = new Map();
-  sock.fbSessions = new Map();
-  sock.videoSessions = new Map();
-  sock.settingSessions = new Map();
-
   sock.ev.on("connection.update", async (update) => {
     const { connection } = update;
 
     if (connection === "open") {
       const currentBotNum = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
-      console.log("\x1b[32m%s\x1b[0m", `🟢 [ONLINE] DARK DINU ACTIVE: +${currentBotNum}`);
+      console.log("\x1b[32m%s\x1b[0m", `🟢 [DARK DINU] Connected: +${currentBotNum}`);
 
       setTimeout(async () => {
         try {
@@ -331,17 +325,6 @@ function initBot(sock) {
 
       const isGroup = from.endsWith("@g.us");
 
-      // 🛑 STRICT ISOLATION GUARD:
-      // Private chat එකකදී මේ මැසේජ් එක අයිති මේ බොට්ට නෙවෙයි නම් කිසිසේත්ම අත තියන්න එපා!
-      if (!isGroup) {
-        const chatWithNum = from.split("@")[0].replace(/[^0-9]/g, "");
-        // Private chat එකකදී receiver හෝ sender මේ බොට්ගේ අංකය විය යුතුමයි
-        if (chatWithNum !== currentBotNumber && !msg.key.fromMe) {
-          // සාමාන්‍ය user කෙනෙක් මේ බොට්ගේ inbox එකට මැසේජ් කරද්දී from කියන්නේ user ගේ jid එක.
-          // නමුත් මේ socket එකට ඒ message එක ලැබුණේ මේ socket එකේ private chat එකක් විදිහටයි.
-        }
-      }
-
       let sender = isGroup ? (msg.key.participant || msg.participant) : from;
       if (msg.key.fromMe) {
         sender = ownerJid;
@@ -363,8 +346,7 @@ function initBot(sock) {
       const body = extractMessageBody(msg);
       const cleanBody = body.trim();
 
-      // 🛑 SELF-LOOP BAN GUARD:
-      // බොට් විසින්ම යවන messages වලින් command trigger වීම 100% ක් නවත්වයි!
+      // Loop Fix: බොට් තමන් විසින්ම යවන messages වලින් command trigger වීම වැළැක්වීම
       if (msg.key.fromMe && !cleanBody.startsWith(settings?.prefix || ".")) {
         return;
       }
@@ -374,28 +356,28 @@ function initBot(sock) {
       };
 
       /* =========================================================
-         ⭐ 1. INTERACTIVE SELECTION (ISOLATED TO THIS SOCKET ONLY)
+         ⭐ 1. INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK 1, 2, 3)
       ========================================================= */
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
       if (quotedMsgId && ["1", "2", "3", "4"].includes(cleanBody)) {
         
         // Facebook
-        if (sock.fbSessions.has(quotedMsgId)) {
-          const fbSession = sock.fbSessions.get(quotedMsgId);
+        if (global.fbSessions && global.fbSessions.has(quotedMsgId)) {
+          const fbSession = global.fbSessions.get(quotedMsgId);
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
               const vidUrl = fbSession.hd || fbSession.sd;
-              await sock.sendMessage(from, { video: { url: vidUrl }, caption: `🎬 *${fbSession.title}*\n⚡ HD Quality\n\n> *${settings.botName}*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: vidUrl }, caption: `🎬 *${fbSession.title || "Video"}*\n⚡ HD Quality\n\n> *${settings.botName}*` }, { quoted: msg });
             } else if (cleanBody === "2") {
               const vidUrl = fbSession.sd || fbSession.hd;
-              await sock.sendMessage(from, { video: { url: vidUrl }, caption: `🎬 *${fbSession.title}*\n⚡ SD Quality\n\n> *${settings.botName}*` }, { quoted: msg });
+              await sock.sendMessage(from, { video: { url: vidUrl }, caption: `🎬 *${fbSession.title || "Video"}*\n⚡ SD Quality\n\n> *${settings.botName}*` }, { quoted: msg });
             } else if (cleanBody === "3") {
               await sock.sendMessage(from, { audio: { url: fbSession.audio || fbSession.sd }, mimetype: "audio/mp4", fileName: "fb_audio.mp3" }, { quoted: msg });
             }
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            sock.fbSessions.delete(quotedMsgId);
+            global.fbSessions.delete(quotedMsgId);
             return;
           } catch (e) {
             await reply("❌ FB Error: " + e.message);
@@ -404,8 +386,8 @@ function initBot(sock) {
         }
 
         // Song
-        if (sock.songSessions.has(quotedMsgId)) {
-          const session = sock.songSessions.get(quotedMsgId);
+        if (global.songSessions && global.songSessions.has(quotedMsgId)) {
+          const session = global.songSessions.get(quotedMsgId);
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
@@ -418,7 +400,7 @@ function initBot(sock) {
               await sock.sendMessage(from, { audio: voiceBuf, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
             }
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            sock.songSessions.delete(quotedMsgId);
+            global.songSessions.delete(quotedMsgId);
             return;
           } catch (e) {
             await reply("❌ Audio Error.");
@@ -427,8 +409,8 @@ function initBot(sock) {
         }
 
         // TikTok
-        if (sock.tiktokSessions.has(quotedMsgId)) {
-          const ttSession = sock.tiktokSessions.get(quotedMsgId);
+        if (global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
+          const ttSession = global.tiktokSessions.get(quotedMsgId);
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
           try {
             if (cleanBody === "1") {
@@ -441,7 +423,7 @@ function initBot(sock) {
               await sock.sendMessage(from, { audio: voiceBuffer, mimetype: "audio/ogg; codecs=opus", ptt: true }, { quoted: msg });
             }
             await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-            sock.tiktokSessions.delete(quotedMsgId);
+            global.tiktokSessions.delete(quotedMsgId);
             return;
           } catch (e) {
             await reply("❌ TikTok Error.");
@@ -605,7 +587,7 @@ function initBot(sock) {
       }
 
       // Settings Reply Handler
-      if (quotedMsgId && sock.settingSessions.has(quotedMsgId) && (isOwner || isDev)) {
+      if (quotedMsgId && global.settingSessions.has(quotedMsgId) && (isOwner || isDev)) {
         const settingCmd = getCommand("setting");
         if (settingCmd && typeof settingCmd.execute === "function") {
           return await settingCmd.execute(sock, msg, [], from, {
@@ -615,7 +597,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. COMMAND ROUTING & PREFIX MATCHER
+         6. COMMAND ROUTING & EXECUTION
       ========================================================= */
       const defaultPrefixes = [".", "!", "#", "/", "*", ","];
       const configuredPrefix = settings?.prefix || ".";
@@ -635,7 +617,7 @@ function initBot(sock) {
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [${settings.botName}] Executing: ${matchedPrefix}${commandName} | By: +${senderClean}`);
+      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber} | User: +${senderClean}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
@@ -659,7 +641,7 @@ function initBot(sock) {
           });
         } catch (cmdErr) {
           console.error(`❌ Execution error in ${commandName}:`, cmdErr);
-          await reply(`⚠️️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
+          await reply(`⚠️ Error executing *${commandName}*:\n_${cmdErr.message}_`);
         }
       } else if (["ping", "speed", "p"].includes(commandName)) {
         try {
