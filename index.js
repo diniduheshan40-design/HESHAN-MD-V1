@@ -3,7 +3,7 @@ require("dotenv").config();
 process.setMaxListeners(0);
 
 process.on("uncaughtException", (err) => {
-  console.error("⚠️️ Caught Exception:", err.message);
+  console.error("⚠ Caught Exception:", err.message);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled Rejection:", reason);
@@ -87,10 +87,6 @@ const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://diniduheshan2007_db_user:SZD7sfcIU6Einajx@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
 
-/* =========================================================
-   SETTINGS SCHEMA & HELPER
-========================================================= */
-
 const BotSettingsSchema = new mongoose.Schema(
   {
     botNumber: { type: String, unique: true, required: true },
@@ -168,7 +164,7 @@ function loadCommands() {
       fs.mkdirSync(commandsDir, { recursive: true });
     }
 
-    const files = fs.readdirSync(commandsDir).filter(f => f.endsWith(".js"));
+    const files = fs.readdirSync(commandsDir).filter((f) => f.endsWith(".js"));
     console.log(`\x1b[36m%s\x1b[0m`, `📂 [LOADER] Scanning folder: Found ${files.length} command files.`);
 
     for (const file of files) {
@@ -182,7 +178,7 @@ function loadCommands() {
           commands.set(name, cmd);
 
           if (Array.isArray(cmd.alias)) {
-            cmd.alias.forEach(a => aliases.set(a.toLowerCase().trim(), name));
+            cmd.alias.forEach((a) => aliases.set(a.toLowerCase().trim(), name));
           }
         }
       } catch (err) {
@@ -342,7 +338,6 @@ function initBot(sock) {
       );
 
       const isOwner = Boolean(isDev || isBotOwner);
-
       const body = extractMessageBody(msg);
       const cleanBody = body.trim();
 
@@ -354,14 +349,10 @@ function initBot(sock) {
         return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
       };
 
-      /* =========================================================
-         ⭐ 1. INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK 1, 2, 3)
-      ========================================================= */
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
       if (quotedMsgId && ["1", "2", "3", "4"].includes(cleanBody)) {
-        
-        // Facebook
+        // Facebook Downloader
         if (global.fbSessions && global.fbSessions.has(quotedMsgId)) {
           const fbSession = global.fbSessions.get(quotedMsgId);
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
@@ -399,7 +390,7 @@ function initBot(sock) {
           }
         }
 
-        // Song
+        // Song Downloader
         if (global.songSessions && global.songSessions.has(quotedMsgId)) {
           const session = global.songSessions.get(quotedMsgId);
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
@@ -422,7 +413,7 @@ function initBot(sock) {
           }
         }
 
-        // TikTok
+        // TikTok Downloader
         if (global.tiktokSessions && global.tiktokSessions.has(quotedMsgId)) {
           const ttSession = global.tiktokSessions.get(quotedMsgId);
           await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
@@ -451,7 +442,7 @@ function initBot(sock) {
           }
         }
 
-        // YouTube
+        // YouTube Downloader
         if (global.videoSessions && global.videoSessions.has(quotedMsgId)) {
           const vSession = global.videoSessions.get(quotedMsgId);
           const qualityMap = { "1": "1080p", "2": "720p", "3": "480p", "4": "360p" };
@@ -485,9 +476,7 @@ function initBot(sock) {
         }
       }
 
-      /* =========================================================
-         2. ANTI-DELETE
-      ========================================================= */
+      // Anti-Delete
       if (msg.key.id && !msg.key.fromMe) {
         global.msgStore.set(msg.key.id, {
           msg,
@@ -561,9 +550,7 @@ function initBot(sock) {
         }
       }
 
-      /* =========================================================
-         3. ANTI-VIEWONCE
-      ========================================================= */
+      // Anti-ViewOnce
       const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
       const quotedMsgRaw = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       const isEmojiReplyVO = quotedMsgRaw && antiViewEmojis.includes(cleanBody) && (quotedMsgRaw.viewOnceMessageV2 || quotedMsgRaw.viewOnceMessage);
@@ -603,7 +590,7 @@ function initBot(sock) {
             const buffer = await downloadMediaMessage(fakeMessageToDownload, "buffer", {}, { logger: console });
 
             const caption = 
-`╭───『 👁️️ 𝐀𝐍𝐓𝐈-𝐕𝐈𝐄𝐖𝐎𝐍𝐂𝐄 』───◆
+`╭───『 👁 𝐀𝐍𝐓𝐈-𝐕𝐈𝐄𝐖𝐎𝐍𝐂𝐄 』───◆
 │
 │ 👤 *Sender:* +${senderNum}
 │ 📁 *Type:* ${isImg ? "Photo" : "Video"}
@@ -623,9 +610,7 @@ function initBot(sock) {
         } catch (voErr) {}
       }
 
-      /* =========================================================
-         4. AUTO STATUS READ & REACT
-      ========================================================= */
+      // Auto Status Seen & React
       if (from === "status@broadcast") {
         try {
           if (settings.statusSeen) {
@@ -644,9 +629,7 @@ function initBot(sock) {
         return;
       }
 
-      /* =========================================================
-         5. WORK MODE PROTECTION
-      ========================================================= */
+      // Work Mode Protection
       if (!isOwner) {
         const mode = (settings?.workMode || "public").toLowerCase();
         if (mode === "private") return;
@@ -654,9 +637,7 @@ function initBot(sock) {
         if (mode === "inbox" && isGroup) return;
       }
 
-      /* =========================================================
-         6. FAKE PRESENCE
-      ========================================================= */
+      // Fake Presence
       if (settings.presence === "typing") {
         try {
           await sock.presenceSubscribe(from);
@@ -684,101 +665,23 @@ function initBot(sock) {
         }
       }
 
-      /* =========================================================
-         7. EMOJI VOICE REACTION SYSTEM
-      ========================================================= */
-      if (global.evoiceEnabled === undefined) {
-        try {
-          const evData = await BotMeta.findOne({ key: "evoice_status" });
-          global.evoiceEnabled = evData ? Boolean(evData.value) : false;
-        } catch (e) {
-          global.evoiceEnabled = false;
-        }
-      }
-
+      // Command Execution
       const defaultPrefixes = [".", "!", "#", "/", "*", ","];
       const configuredPrefix = settings?.prefix || ".";
-      const isCommandPattern = body.startsWith(configuredPrefix) || defaultPrefixes.some(p => body.startsWith(p));
-
-      if (global.evoiceEnabled && cleanBody && !isCommandPattern) {
-        const emojiVoiceMap = {
-          "🙏": "https://files.catbox.moe/1e2359.opus",
-          "☸️": "https://files.catbox.moe/1e2359.opus",
-          "🌹": "https://files.catbox.moe/uxm1re.opus",
-          "💆‍♂️": "https://files.catbox.moe/uxm1re.opus",
-          "😅": "https://files.catbox.moe/cvv435.opus",
-          "🤣": "https://files.catbox.moe/cvv435.opus",
-          "😂": "https://files.catbox.moe/cvv435.opus",
-          "🫢": "https://files.catbox.moe/i2uw0g.opus",
-          "🌚": "https://files.catbox.moe/i2uw0g.opus",
-          "💇‍♂️": "https://files.catbox.moe/i2uw0g.opus",
-          "🫣": "https://files.catbox.moe/oqfsdl.opus",
-          "🤪": "https://files.catbox.moe/oqfsdl.opus",
-          "😜": "https://files.catbox.moe/oqfsdl.opus",
-          "🥵": "https://files.catbox.moe/bfwnvj.opus",
-          "🤤": "https://files.catbox.moe/bfwnvj.opus",
-          "🍑": "https://files.catbox.moe/bfwnvj.opus",
-          "🫀": "https://files.catbox.moe/bke4vj.opus",
-          "💔": "https://files.catbox.moe/bke4vj.opus",
-          "🙇‍♂️": "https://files.catbox.moe/bke4vj.opus",
-          "🥺": "https://files.catbox.moe/o5270o.opus",
-          "😭": "https://files.catbox.moe/o5270o.opus",
-          "🥹": "https://files.catbox.moe/o5270o.opus"
-        };
-
-        let targetAudio = null;
-
-        if (emojiVoiceMap[cleanBody]) {
-          targetAudio = emojiVoiceMap[cleanBody];
-        } else {
-          for (const emoji of Object.keys(emojiVoiceMap)) {
-            if (cleanBody.endsWith(emoji)) {
-              targetAudio = emojiVoiceMap[emoji];
-              break;
-            }
-          }
-        }
-
-        if (targetAudio) {
-          try {
-            const audioStream = await axios.get(targetAudio, {
-              responseType: "arraybuffer",
-              timeout: 25000,
-              headers: { "User-Agent": "Mozilla/5.0" }
-            });
-
-            const voiceBuf = await convertToWhatsAppVoice(Buffer.from(audioStream.data));
-
-            await sock.sendMessage(from, {
-              audio: voiceBuf,
-              mimetype: "audio/ogg; codecs=opus",
-              ptt: true
-            }, { quoted: msg });
-            return;
-          } catch (evErr) {}
-        }
-      }
-
-      /* =========================================================
-         8. COMMAND ROUTING & PREFIX MATCHER
-      ========================================================= */
       let matchedPrefix = null;
 
       if (body.startsWith(configuredPrefix)) {
         matchedPrefix = configuredPrefix;
-      } else if (defaultPrefixes.some(p => body.startsWith(p))) {
-        matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
+      } else if (defaultPrefixes.some((p) => body.startsWith(p))) {
+        matchedPrefix = defaultPrefixes.find((p) => body.startsWith(p));
       }
 
-      if (!matchedPrefix) {
-        return;
-      }
+      if (!matchedPrefix) return;
 
       const args = body.slice(matchedPrefix.length).trim().split(/ +/);
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber} | Sender: +${senderClean} | isOwner: ${isOwner}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
@@ -937,20 +840,24 @@ async function getCode() {
 });
 
 app.get("/pair", async (req, res) => {
-  if (pairingInProgress) return res.status(429).json({ error: "Pairing in progress, please wait 10 seconds..." });
+  if (pairingInProgress) {
+    return res.status(429).json({ error: "Another pairing is in progress. Please wait a moment." });
+  }
 
   let number = String(req.query.num || "").replace(/[^0-9]/g, "");
   if (number.startsWith("0")) number = "94" + number.substring(1);
-  if (!/^94[0-9]{9}$/.test(number)) return res.status(400).json({ error: "Invalid Sri Lankan number format." });
+  if (!/^94[0-9]{9}$/.test(number)) {
+    return res.status(400).json({ error: "Invalid Sri Lankan phone number." });
+  }
 
   pairingInProgress = true;
   try {
     const result = await requestPairCode(number);
     return res.json({ success: true, code: result.code });
   } catch (error) {
-    return res.status(500).json({ error: error.message || "Pairing failed. Try again in 5 seconds." });
+    return res.status(500).json({ error: error.message || "Failed to get pairing code." });
   } finally {
-    setTimeout(() => { pairingInProgress = false; }, 3000);
+    pairingInProgress = false;
   }
 });
 
@@ -962,10 +869,6 @@ app.get("/health", (req, res) => {
     activeBots: global.activeBotSockets ? global.activeBotSockets.size : 0
   });
 });
-
-/* =========================================================
-   24/7 KEEP-ALIVE SERVER START
-========================================================= */
 
 async function start() {
   app.listen(PORT, "0.0.0.0", () => {
