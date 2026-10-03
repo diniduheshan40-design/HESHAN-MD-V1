@@ -16,57 +16,25 @@ const {
 const logger = pino({ level: "silent" });
 const baseSessionDir = path.join(__dirname, "sessions");
 
-/* =========================================================
-   GLOBAL STORAGE & MEMORY MANAGEMENT
-========================================================= */
-
-if (!global.activeBotSockets) {
-  global.activeBotSockets = new Set();
-}
-
-if (!global.allActiveSessions) {
-  global.allActiveSessions = new Map();
-}
-
-if (!global.sessionRetryCache) {
-  global.sessionRetryCache = new Map();
-}
+if (!global.activeBotSockets) global.activeBotSockets = new Set();
+if (!global.allActiveSessions) global.allActiveSessions = new Map();
+if (!global.sessionRetryCache) global.sessionRetryCache = new Map();
 
 const reconnectRetries = new Map();
 let onSocketCreatedCallback = null;
 
-/* =========================================================
-   MONGODB SESSION MODEL
-========================================================= */
-
 const SessionSchema = new mongoose.Schema(
   {
-    sessionId: {
-      type: String,
-      unique: true,
-      required: true
-    },
-    phoneNumber: {
-      type: String,
-      required: true
-    },
-    files: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {}
-    }
+    sessionId: { type: String, unique: true, required: true },
+    phoneNumber: { type: String, required: true },
+    files: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
 const SessionModel =
   mongoose.models.DarkDinuSession ||
   mongoose.model("DarkDinuSession", SessionSchema);
-
-/* =========================================================
-   DIRECTORY HELPERS
-========================================================= */
 
 function ensureBaseDir() {
   try {
@@ -74,7 +42,7 @@ function ensureBaseDir() {
       fs.mkdirSync(baseSessionDir, { recursive: true });
     }
   } catch (error) {
-    console.error("❌ [DIRECTORY ERROR]:", error.message);
+    console.error("❌ [DIR ERROR]:", error.message);
   }
 }
 
@@ -89,34 +57,19 @@ function getSessionFolder(sessionId) {
 
 function isSafeSessionFile(fileName) {
   if (!fileName) return false;
-  return (
-    !fileName.includes("..") &&
-    !fileName.includes("/") &&
-    !fileName.includes("\\")
-  );
+  return !fileName.includes("..") && !fileName.includes("/") && !fileName.includes("\\");
 }
-
-/* =========================================================
-   PHONE NUMBER NORMALIZER
-========================================================= */
 
 function normalizePhoneNumber(phoneNumber) {
   let number = String(phoneNumber || "").replace(/[^0-9]/g, "");
-
   if (number.startsWith("0")) {
     number = "94" + number.substring(1);
   }
-
   if (!number.startsWith("94") || number.length !== 11) {
     throw new Error("Invalid Sri Lankan phone number. Example: 0771234567");
   }
-
   return number;
 }
-
-/* =========================================================
-   DISCONNECT CODE HELPER
-========================================================= */
 
 function getDisconnectCode(lastDisconnect) {
   try {
@@ -130,10 +83,6 @@ function getDisconnectCode(lastDisconnect) {
     return null;
   }
 }
-
-/* =========================================================
-   BACKUP SESSION TO MONGODB (DEBOUNCED)
-========================================================= */
 
 const backupDebounce = new Map();
 
@@ -156,7 +105,6 @@ async function backupSession(sessionId, phoneNumber) {
         for (const file of list) {
           try {
             if (!isSafeSessionFile(file)) continue;
-
             const filePath = path.join(sessionDir, file);
             if (!fs.existsSync(filePath)) continue;
 
@@ -178,13 +126,9 @@ async function backupSession(sessionId, phoneNumber) {
       } catch (error) {
         console.error(`❌ [MONGO BACKUP ERROR] ${sessionId}:`, error.message);
       }
-    }, 1500)
+    }, 2000)
   );
 }
-
-/* =========================================================
-   REMOVE SESSION (SAFE LOGOUT)
-========================================================= */
 
 async function removeSession(sessionId, sessionDir) {
   try {
@@ -197,10 +141,6 @@ async function removeSession(sessionId, sessionDir) {
     }
   } catch (error) {}
 }
-
-/* =========================================================
-   CREATE BAILEYS SOCKET
-========================================================= */
 
 let cachedVersion = null;
 
@@ -235,15 +175,13 @@ async function createMultiSocket(sessionId, phoneNumber) {
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 30000,
+    keepAliveIntervalMs: 25000,
     emitOwnEvents: true,
     generateHighQualityLinkPreview: false,
     msgRetryCounterCache,
-    retryRequestDelayMs: 2500,
+    retryRequestDelayMs: 2000,
     maxMsgRetryCount: 5,
-    getMessage: async (key) => {
-      return { conversation: "" };
-    }
+    getMessage: async () => ({ conversation: "" })
   };
 
   const sock = makeWASocket(socketConfig);
@@ -258,20 +196,12 @@ async function createMultiSocket(sessionId, phoneNumber) {
 
   global.allActiveSessions.set(sessionId, sock);
 
-  /* =======================================================
-     CREDS UPDATE
-  ======================================================= */
-
   sock.ev.on("creds.update", async () => {
     try {
       await saveCreds();
       await backupSession(sessionId, phoneNumber);
     } catch (error) {}
   });
-
-  /* =======================================================
-     CONNECTION UPDATE
-  ======================================================= */
 
   sock.ev.on("connection.update", async (update) => {
     try {
@@ -299,17 +229,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
         global.activeBotSockets.delete(sock);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          const retries = reconnectRetries.get(sessionId) || 0;
-          if (retries < 2) {
-            reconnectRetries.set(sessionId, retries + 1);
-            console.log(`⚠️ [VERIFYING 401] +${phoneNumber} - Retry verification: ${retries + 1}`);
-            setTimeout(() => {
-              createMultiSocket(sessionId, phoneNumber).catch(() => {});
-            }, 3000);
-            return;
-          }
-
-          console.log(`🚪 [CONFIRMED LOGOUT] +${phoneNumber} Removed.`);
+          console.log(`🚪 [LOGGED OUT] +${phoneNumber} Removed.`);
           reconnectRetries.delete(sessionId);
           global.allActiveSessions.delete(sessionId);
           await removeSession(sessionId, sessionDir);
@@ -322,42 +242,31 @@ async function createMultiSocket(sessionId, phoneNumber) {
             await backupSession(sessionId, phoneNumber);
           } catch (e) {}
 
-          if (global.allActiveSessions.get(sessionId) === sock) {
-            global.allActiveSessions.delete(sessionId);
-          }
-
           setTimeout(() => {
             createMultiSocket(sessionId, phoneNumber).catch(() => {});
           }, 2000);
           return;
         }
 
-        if (global.allActiveSessions.get(sessionId) === sock) {
-          global.allActiveSessions.delete(sessionId);
-        }
-
         setTimeout(() => {
-          const current = global.allActiveSessions.get(sessionId);
-          if (current && current !== sock) return;
-
           createMultiSocket(sessionId, phoneNumber).catch(() => {});
         }, 5000);
       }
-    } catch (error) {}
+    } catch (error) {
+      console.error("Connection update error:", error);
+    }
   });
 
   if (onSocketCreatedCallback) {
     try {
       onSocketCreatedCallback(sock);
-    } catch (error) {}
+    } catch (error) {
+      console.error("Socket callback error:", error);
+    }
   }
 
   return sock;
 }
-
-/* =========================================================
-   RESTORE ALL MONGO SESSIONS AT STARTUP
-========================================================= */
 
 async function restoreCredentials() {
   ensureBaseDir();
@@ -389,7 +298,7 @@ async function restoreCredentials() {
         }
 
         createMultiSocket(sessionId, phoneNumber).catch(() => {});
-        await delay(1200);
+        await delay(1500);
       } catch (error) {}
     }
 
@@ -399,91 +308,6 @@ async function restoreCredentials() {
     return false;
   }
 }
-
-/* =========================================================
-   REQUEST PAIRING CODE
-========================================================= */
-
-async function requestPairCodeInternal(sock, cleanNumber) {
-  let requestStarted = false;
-
-  return new Promise((resolve, reject) => {
-    let finished = false;
-    let pairingTimer = null;
-    let hardTimeout = null;
-
-    const cleanup = () => {
-      try {
-        sock.ev.off("connection.update", onUpdate);
-      } catch (e) {}
-      if (pairingTimer) clearTimeout(pairingTimer);
-      if (hardTimeout) clearTimeout(hardTimeout);
-    };
-
-    const fail = (error) => {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      reject(error);
-    };
-
-    const generateCode = async () => {
-      if (finished || requestStarted) return;
-      if (sock.darkDinuAuthState?.creds?.registered) return;
-
-      requestStarted = true;
-
-      try {
-        const rawCode = await sock.requestPairingCode(cleanNumber);
-        if (!rawCode) throw new Error("WhatsApp did not return a pairing code.");
-
-        const code = String(rawCode);
-        const formattedCode =
-          code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-
-        if (finished) return;
-        finished = true;
-        cleanup();
-
-        resolve({ code: formattedCode, socket: sock });
-      } catch (error) {
-        requestStarted = false;
-        fail(error);
-      }
-    };
-
-    const onUpdate = async (update) => {
-      try {
-        const { connection, qr } = update;
-        if (qr) {
-          await generateCode();
-          return;
-        }
-
-        if (connection === "connecting") {
-          if (!pairingTimer && !requestStarted) {
-            pairingTimer = setTimeout(async () => {
-              pairingTimer = null;
-              await generateCode();
-            }, 3000);
-          }
-        }
-      } catch (error) {
-        fail(error);
-      }
-    };
-
-    sock.ev.on("connection.update", onUpdate);
-
-    hardTimeout = setTimeout(() => {
-      fail(new Error("Pairing code timeout. Please try again."));
-    }, 60000);
-  });
-}
-
-/* =========================================================
-   REQUEST PAIRING CODE - PUBLIC
-========================================================= */
 
 async function requestPairCode(phoneNumber) {
   const cleanNumber = normalizePhoneNumber(phoneNumber);
@@ -517,34 +341,54 @@ async function requestPairCode(phoneNumber) {
   } catch (error) {}
 
   const sock = await createMultiSocket(sessionId, cleanNumber);
-  return await requestPairCodeInternal(sock, cleanNumber);
-}
 
-async function backupAllCredentials() {
-  try {
-    const sessions = await SessionModel.find({}).lean();
-    for (const session of sessions) {
-      await backupSession(session.sessionId, session.phoneNumber);
-    }
-  } catch (error) {}
-}
+  return new Promise((resolve, reject) => {
+    let completed = false;
 
-async function startSavedSocket() {
-  return null;
-}
+    const timeout = setTimeout(() => {
+      if (!completed) {
+        completed = true;
+        reject(new Error("Pairing code request timed out. Please try again."));
+      }
+    }, 45000);
 
-function getActiveSocket() {
-  return global.activeBotSockets.values().next().value || null;
+    const checkAndRequest = async () => {
+      try {
+        await delay(3000); // Baileys connection stabilization delay
+        if (completed) return;
+        if (sock.darkDinuAuthState?.creds?.registered) {
+          completed = true;
+          clearTimeout(timeout);
+          return reject(new Error("Device is already registered."));
+        }
+
+        const rawCode = await sock.requestPairingCode(cleanNumber);
+        if (!rawCode) throw new Error("No pairing code received from WhatsApp");
+
+        const codeStr = String(rawCode);
+        const formattedCode =
+          codeStr.length === 8 ? `${codeStr.slice(0, 4)}-${codeStr.slice(4)}` : codeStr;
+
+        completed = true;
+        clearTimeout(timeout);
+        resolve({ code: formattedCode });
+      } catch (err) {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timeout);
+          reject(err);
+        }
+      }
+    };
+
+    checkAndRequest();
+  });
 }
 
 module.exports = {
   restoreCredentials,
-  backupAllCredentials,
   requestPairCode,
-  requestPairingCode: requestPairCode,
-  startSavedSocket,
   onSocketCreated: (callback) => {
     onSocketCreatedCallback = callback;
-  },
-  getActiveSocket
+  }
 };
