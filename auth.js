@@ -3,6 +3,16 @@ const path = require("path");
 const pino = require("pino");
 const mongoose = require("mongoose");
 
+// Bad MAC error spam එක process console එකෙන්ම filter කර server freeze වීම වැළැක්වීම
+const originalConsoleError = console.error;
+console.error = (...args) => {
+  const msg = args.join(" ");
+  if (msg.includes("Bad MAC") || msg.includes("Session error:Error: Bad MAC") || msg.includes("Failed to decrypt message")) {
+    return;
+  }
+  originalConsoleError.apply(console, args);
+};
+
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -180,13 +190,11 @@ async function createMultiSocket(sessionId, phoneNumber) {
   }
   const msgRetryCounterCache = global.sessionRetryCache.get(sessionId);
 
-  const safeSignalKeys = makeCacheableSignalKeyStore(state.keys, logger);
-
   const socketConfig = {
     logger,
     auth: {
       creds: state.creds,
-      keys: safeSignalKeys
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     version: cachedVersion,
     browser: Browsers.macOS("Desktop"),
@@ -200,8 +208,8 @@ async function createMultiSocket(sessionId, phoneNumber) {
     generateHighQualityLinkPreview: false,
     msgRetryCounterCache,
     retryRequestDelayMs: 3000,
-    maxMsgRetryCount: 3,
-    getMessage: async (key) => ({ conversation: "" })
+    maxMsgRetryCount: 1,
+    getMessage: async () => ({ conversation: "" })
   };
 
   const sock = makeWASocket(socketConfig);
@@ -402,21 +410,15 @@ async function requestPairCode(phoneNumber) {
   });
 }
 
-/* =========================================================
-   FORCE LOGOUT ALL ACTIVE BOTS & FULL SYSTEM WIPE
-========================================================= */
 async function logoutAllBots() {
   console.log("🛑 [SYSTEM WIPE] Starting complete bot wipe & logout...");
 
   if (global.allActiveSessions && global.allActiveSessions.size > 0) {
     for (const [sessionId, sock] of global.allActiveSessions.entries()) {
       try {
-        console.log(`🔌 Logging out session: ${sessionId}`);
         if (sock.logout) await sock.logout();
         if (sock.end) sock.end(undefined);
-      } catch (err) {
-        console.error(`Logout error for ${sessionId}:`, err.message);
-      }
+      } catch (err) {}
     }
     global.allActiveSessions.clear();
   }
@@ -426,21 +428,17 @@ async function logoutAllBots() {
   }
 
   try {
-    const res = await SessionModel.deleteMany({});
-    console.log(`🗑️ Removed ${res.deletedCount} sessions from MongoDB.`);
-  } catch (err) {
-    console.error("MongoDB clear error:", err.message);
-  }
+    await SessionModel.deleteMany({});
+    console.log("🗑️ MongoDB DarkDinuSession cleared.");
+  } catch (err) {}
 
   try {
     if (fs.existsSync(baseSessionDir)) {
       fs.rmSync(baseSessionDir, { recursive: true, force: true });
       fs.mkdirSync(baseSessionDir, { recursive: true });
-      console.log("📁 Storage folders cleared.");
+      console.log("📁 Local session folders wiped.");
     }
-  } catch (err) {
-    console.error("Folder clear error:", err.message);
-  }
+  } catch (err) {}
 
   return true;
 }
