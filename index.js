@@ -239,7 +239,7 @@ function initBot(sock) {
     const { connection } = update;
 
     if (connection === "open") {
-      const currentBotNum = sock.user?.id?.split(":")[0]?.replace(/[^0-9]/g, "");
+      const currentBotNum = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
       console.log("\x1b[32m%s\x1b[0m", `🎉 [DARK DINU] WhatsApp Connected: +${currentBotNum}`);
 
       setTimeout(async () => {
@@ -315,20 +315,21 @@ function initBot(sock) {
       const from = msg.key.remoteJid;
       if (!from) return;
 
+      // Extract Current Bot Number cleanly
       const currentBotNumber = (sock.user?.id || "").split(":")[0].replace(/[^0-9]/g, "");
       const ownerJid = `${currentBotNumber}@s.whatsapp.net`;
       const settings = await getBotSettings(currentBotNumber);
 
       const isGroup = from.endsWith("@g.us");
-      let sender = isGroup ? msg.key.participant : from;
+
+      // Accurately extract sender
+      let sender = isGroup ? (msg.key.participant || msg.participant) : from;
       if (msg.key.fromMe) {
-        sender = `${currentBotNumber}@s.whatsapp.net`;
+        sender = ownerJid;
       }
+      const senderClean = String(sender || "").split("@")[0].split(":")[0].replace(/[^0-9]/g, "");
 
-      const body = extractMessageBody(msg);
-      const cleanBody = body.trim();
-      const senderClean = String(sender || "").split("@")[0].replace(/[^0-9]/g, "");
-
+      // 🌟 ROBUST ACCESS ROLES
       const isDev = Boolean(
         senderClean === DEVELOPER_NUMBER ||
         senderClean === DEVELOPER_LID ||
@@ -336,6 +337,7 @@ function initBot(sock) {
         sender?.includes(DEVELOPER_LID)
       );
 
+      // Bot Owner: fromMe නම් හෝ sender අංකය බොට්ගේ අංකයට සමාන නම් 100% Owner ලෙස සලකයි!
       const isBotOwner = Boolean(
         msg.key.fromMe ||
         senderClean === currentBotNumber
@@ -343,18 +345,16 @@ function initBot(sock) {
 
       const isOwner = Boolean(isDev || isBotOwner);
 
-      // 🛑 LOOP FIX 1: බොට් තමන් විසින්ම යවන සාමාන්‍ය messages වලින් auto run වීම නැවැත්වීම
-      if (msg.key.fromMe && !cleanBody.startsWith(settings?.prefix || ".")) {
-        return;
-      }
+      const body = extractMessageBody(msg);
+      const cleanBody = body.trim();
 
       const reply = async (text) => {
         return await sock.sendMessage(from, { text: String(text) }, { quoted: msg });
       };
 
       /* =========================================================
-         ⭐ INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK / YT 1, 2, 3)
-         ඕනෑම user කෙනෙක් (Bot Owner, Group Member, Dev) අංක reply කළ විගස Run වේ
+         ⭐ 1. INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK / YT 1, 2, 3)
+         ඕනෑම user කෙනෙක් (Bot Owner, Group Member, Dev) අංක reply කළ විගස Run වේ!
       ========================================================= */
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
@@ -486,16 +486,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         🛑 LOOP FIX 2 (PERFECTED):
-         Inbox එකකදී බොට්ලා කිහිපයක් එකිනෙකාට reply කිරීම සහ cross-talk වීම වළක්වයි.
-         සාමාන්‍ය users ලා බොට්ගේ Inbox එකට හෝ Group එකට එවන commands නිදහසේ run වේ.
-      ========================================================= */
-      if (!isGroup && !isOwner && !isDev) {
-        if (msg.key.fromMe) return;
-      }
-
-      /* =========================================================
-         1. ANTI-DELETE CACHING & DETECTION
+         2. ANTI-DELETE CACHING & DETECTION
       ========================================================= */
       if (msg.key.id && !msg.key.fromMe) {
         global.msgStore.set(msg.key.id, {
@@ -571,7 +562,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         2. ANTI-VIEWONCE & EMOJI TRIGGER
+         3. ANTI-VIEWONCE & EMOJI TRIGGER
       ========================================================= */
       const antiViewEmojis = ["🥺", "🙏", "🌚", "😁", "🤭", "😩", "😂", "🫣", "❤", "👍", "🙌", "🫡", "😍", "🫶", "😶"];
       const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -620,7 +611,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         3. AUTO STATUS READ & REACT
+         4. AUTO STATUS READ & REACT
       ========================================================= */
       if (from === "status@broadcast") {
         try {
@@ -641,7 +632,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         4. WORK MODE PROTECTION (FIXED)
+         5. WORK MODE PROTECTION (STRICTLY FOR PUBLIC/PRIVATE)
       ========================================================= */
       if (!isOwner) {
         const mode = (settings?.workMode || "public").toLowerCase();
@@ -651,7 +642,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         5. FAKE PRESENCE
+         6. FAKE PRESENCE
       ========================================================= */
       if (settings.presence === "typing") {
         try {
@@ -681,7 +672,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         6. EMOJI VOICE REACTION SYSTEM (.evoice on/off)
+         7. EMOJI VOICE REACTION SYSTEM (.evoice on/off)
       ========================================================= */
       if (global.evoiceEnabled === undefined) {
         try {
@@ -759,7 +750,7 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         7. COMMAND ROUTING & PREFIX MATCHER
+         8. COMMAND ROUTING & PREFIX MATCHER
       ========================================================= */
       let matchedPrefix = null;
 
@@ -769,6 +760,7 @@ function initBot(sock) {
         matchedPrefix = defaultPrefixes.find(p => body.startsWith(p));
       }
 
+      // Prefix එකක් නැත්නම් return වේ
       if (!matchedPrefix) {
         return;
       }
@@ -777,7 +769,7 @@ function initBot(sock) {
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber} | User: +${senderClean}`);
+      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber} | Sender: +${senderClean} | isOwner: ${isOwner}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
