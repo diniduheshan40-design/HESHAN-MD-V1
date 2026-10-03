@@ -13,6 +13,7 @@ const {
   fetchLatestBaileysVersion
 } = require("@whiskeysockets/baileys");
 
+// Silent logger prevents console flood on temporary decrypt glitches
 const logger = pino({ level: "silent" });
 const baseSessionDir = path.join(__dirname, "sessions");
 
@@ -26,6 +27,10 @@ if (!global.activeBotSockets) {
 
 if (!global.allActiveSessions) {
   global.allActiveSessions = new Map();
+}
+
+if (!global.sessionRetryCache) {
+  global.sessionRetryCache = new Map();
 }
 
 const reconnectRetries = new Map();
@@ -128,42 +133,54 @@ function getDisconnectCode(lastDisconnect) {
 }
 
 /* =========================================================
-   BACKUP SESSION TO MONGODB
+   BACKUP SESSION TO MONGODB (DEBOUNCED)
 ========================================================= */
 
+const backupDebounce = new Map();
+
 async function backupSession(sessionId, phoneNumber) {
-  try {
-    const sessionDir = path.join(baseSessionDir, sessionId);
-    if (!fs.existsSync(sessionDir)) return;
-
-    const files = {};
-    const list = fs.readdirSync(sessionDir);
-
-    for (const file of list) {
-      try {
-        if (!isSafeSessionFile(file)) continue;
-
-        const filePath = path.join(sessionDir, file);
-        if (!fs.existsSync(filePath)) continue;
-
-        const stat = fs.statSync(filePath);
-        if (!stat.isFile()) continue;
-
-        const safeName = file.replace(/\./g, "___dot___");
-        files[safeName] = fs.readFileSync(filePath, "utf8");
-      } catch (fileError) {}
-    }
-
-    if (!Object.keys(files).length) return;
-
-    await SessionModel.findOneAndUpdate(
-      { sessionId },
-      { $set: { files, phoneNumber } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-  } catch (error) {
-    console.error(`❌ [MONGO BACKUP ERROR] ${sessionId}:`, error.message);
+  if (backupDebounce.has(sessionId)) {
+    clearTimeout(backupDebounce.get(sessionId));
   }
+
+  backupDebounce.set(
+    sessionId,
+    setTimeout(async () => {
+      backupDebounce.delete(sessionId);
+      try {
+        const sessionDir = path.join(baseSessionDir, sessionId);
+        if (!fs.existsSync(sessionDir)) return;
+
+        const files = {};
+        const list = fs.readdirSync(sessionDir);
+
+        for (const file of list) {
+          try {
+            if (!isSafeSessionFile(file)) continue;
+
+            const filePath = path.join(sessionDir, file);
+            if (!fs.existsSync(filePath)) continue;
+
+            const stat = fs.statSync(filePath);
+            if (!stat.isFile()) continue;
+
+            const safeName = file.replace(/\./g, "___dot___");
+            files[safeName] = fs.readFileSync(filePath, "utf8");
+          } catch (fileError) {}
+        }
+
+        if (!Object.keys(files).length) return;
+
+        await SessionModel.findOneAndUpdate(
+          { sessionId },
+          { $set: { files, phoneNumber } },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+      } catch (error) {
+        console.error(`❌ [MONGO BACKUP ERROR] ${sessionId}:`, error.message);
+      }
+    }, 1500)
+  );
 }
 
 /* =========================================================
@@ -183,7 +200,7 @@ async function removeSession(sessionId, sessionDir) {
 }
 
 /* =========================================================
-   CREATE BAILEYS SOCKET
+   CREATE BAILEYS SOCKET (FIXED FOR BAD MAC / DESYNC)
 ========================================================= */
 
 let cachedVersion = null;
@@ -201,6 +218,12 @@ async function createMultiSocket(sessionId, phoneNumber) {
     }
   }
 
+  // Socket-specific retry cache prevents Bad MAC deadlocks
+  if (!global.sessionRetryCache.has(sessionId)) {
+    global.sessionRetryCache.set(sessionId, new Map());
+  }
+  const msgRetryCounterCache = global.sessionRetryCache.get(sessionId);
+
   const socketConfig = {
     logger,
     auth: {
@@ -214,16 +237,20 @@ async function createMultiSocket(sessionId, phoneNumber) {
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 25000,
+    keepAliveIntervalMs: 30000,
     emitOwnEvents: true,
     generateHighQualityLinkPreview: false,
-    retryRequestDelayMs: 2000,
-    maxMsgRetryCount: 3
+    msgRetryCounterCache,
+    retryRequestDelayMs: 2500,
+    maxMsgRetryCount: 5,
+    // Safely bypass broken messages without killing session
+    getMessage: async (key) => {
+      return { conversation: "" };
+    }
   };
 
   const sock = makeWASocket(socketConfig);
 
-  // Prevent memory leak warnings on high load
   if (sock.ev && typeof sock.ev.setMaxListeners === "function") {
     sock.ev.setMaxListeners(0);
   }
@@ -279,7 +306,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
           const retries = reconnectRetries.get(sessionId) || 0;
           if (retries < 2) {
             reconnectRetries.set(sessionId, retries + 1);
-            console.log(`⚠️️ [VERIFYING 401] +${phoneNumber} - Retry verification: ${retries + 1}`);
+            console.log(`⚠️ [VERIFYING 401] +${phoneNumber} - Retry verification: ${retries + 1}`);
             setTimeout(() => {
               createMultiSocket(sessionId, phoneNumber).catch(() => {});
             }, 3000);
@@ -368,7 +395,6 @@ async function restoreCredentials() {
         }
 
         createMultiSocket(sessionId, phoneNumber).catch(() => {});
-        // Staggered startup to keep RAM and network usage low for 100+ bots
         await delay(1200);
       } catch (error) {}
     }
