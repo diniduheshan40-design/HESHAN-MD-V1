@@ -3,11 +3,19 @@ const path = require("path");
 const pino = require("pino");
 const mongoose = require("mongoose");
 
-// Bad MAC error spam එක process console එකෙන්ම filter කර server freeze වීම වැළැක්වීම
+// Signal dump සහ counter errors console එක spam වීම නැවැත්වීම
 const originalConsoleError = console.error;
+const originalConsoleLog = console.log;
+
 console.error = (...args) => {
   const msg = args.join(" ");
-  if (msg.includes("Bad MAC") || msg.includes("Session error:Error: Bad MAC") || msg.includes("Failed to decrypt message")) {
+  if (
+    msg.includes("MessageCounterError") ||
+    msg.includes("Bad MAC") ||
+    msg.includes("Session error") ||
+    msg.includes("currentRatchet") ||
+    msg.includes("Failed to decrypt")
+  ) {
     return;
   }
   originalConsoleError.apply(console, args);
@@ -200,15 +208,16 @@ async function createMultiSocket(sessionId, phoneNumber) {
     browser: Browsers.macOS("Desktop"),
     printQRInTerminal: false,
     syncFullHistory: false,
-    markOnlineOnConnect: true,
+    markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 0,
     keepAliveIntervalMs: 25000,
     emitOwnEvents: false,
     generateHighQualityLinkPreview: false,
     msgRetryCounterCache,
-    retryRequestDelayMs: 3000,
+    retryRequestDelayMs: 2500,
     maxMsgRetryCount: 1,
+    // MessageCounter loop වැළැක්වීමට placeholder empty return කිරීම
     getMessage: async () => ({ conversation: "" })
   };
 
@@ -351,6 +360,7 @@ async function requestPairCode(phoneNumber) {
     await delay(1000);
   }
 
+  // පරණ හිරවුණු session keys සම්පූර්ණයෙන්ම මකා දැමීම
   try {
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -411,8 +421,6 @@ async function requestPairCode(phoneNumber) {
 }
 
 async function logoutAllBots() {
-  console.log("🛑 [SYSTEM WIPE] Starting complete bot wipe & logout...");
-
   if (global.allActiveSessions && global.allActiveSessions.size > 0) {
     for (const [sessionId, sock] of global.allActiveSessions.entries()) {
       try {
@@ -429,14 +437,12 @@ async function logoutAllBots() {
 
   try {
     await SessionModel.deleteMany({});
-    console.log("🗑️ MongoDB DarkDinuSession cleared.");
   } catch (err) {}
 
   try {
     if (fs.existsSync(baseSessionDir)) {
       fs.rmSync(baseSessionDir, { recursive: true, force: true });
       fs.mkdirSync(baseSessionDir, { recursive: true });
-      console.log("📁 Local session folders wiped.");
     }
   } catch (err) {}
 
