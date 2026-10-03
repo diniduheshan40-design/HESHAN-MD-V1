@@ -20,9 +20,8 @@ if (!global.activeBotSockets) global.activeBotSockets = new Set();
 if (!global.allActiveSessions) global.allActiveSessions = new Map();
 if (!global.sessionRetryCache) global.sessionRetryCache = new Map();
 
-// Built-in cache class to replace 'node-cache'
 class SimpleCache {
-  constructor(ttlSeconds = 120) {
+  constructor(ttlSeconds = 60) {
     this.ttl = ttlSeconds * 1000;
     this.cache = new Map();
   }
@@ -64,9 +63,7 @@ function ensureBaseDir() {
     if (!fs.existsSync(baseSessionDir)) {
       fs.mkdirSync(baseSessionDir, { recursive: true });
     }
-  } catch (error) {
-    console.error("❌ [DIR ERROR]:", error.message);
-  }
+  } catch (error) {}
 }
 
 function getSessionFolder(sessionId) {
@@ -146,10 +143,8 @@ async function backupSession(sessionId, phoneNumber) {
           { $set: { files, phoneNumber } },
           { upsert: true, new: true, setDefaultsOnInsert: true }
         );
-      } catch (error) {
-        console.error(`❌ [MONGO BACKUP ERROR] ${sessionId}:`, error.message);
-      }
-    }, 2000)
+      } catch (error) {}
+    }, 3000)
   );
 }
 
@@ -181,7 +176,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
   }
 
   if (!global.sessionRetryCache.has(sessionId)) {
-    global.sessionRetryCache.set(sessionId, new SimpleCache(120));
+    global.sessionRetryCache.set(sessionId, new SimpleCache(60));
   }
   const msgRetryCounterCache = global.sessionRetryCache.get(sessionId);
 
@@ -192,19 +187,19 @@ async function createMultiSocket(sessionId, phoneNumber) {
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     version: cachedVersion,
-    browser: Browsers.ubuntu("Chrome"),
+    browser: ["Ubuntu", "Chrome", "20.0.04"], // වඩාත් ස්ථාවර handshake එකක් ලබාදෙයි
     printQRInTerminal: false,
     syncFullHistory: false,
-    markOnlineOnConnect: true,
+    markOnlineOnConnect: false, // Handshake එක අතරතුර WhatsApp overload වීම නවත්වයි
     connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 25000,
+    defaultQueryTimeoutMs: 0,   // Linking එක අතරතුර query timeout වීම සම්පූර්ණයෙන්ම වළක්වයි
+    keepAliveIntervalMs: 15000,
     emitOwnEvents: false,
     generateHighQualityLinkPreview: false,
     msgRetryCounterCache,
-    retryRequestDelayMs: 2500,
-    maxMsgRetryCount: 3,
-    getMessage: async () => ({ conversation: "" })
+    retryRequestDelayMs: 2000,
+    maxMsgRetryCount: 2,
+    getMessage: async () => undefined
   };
 
   const sock = makeWASocket(socketConfig);
@@ -222,7 +217,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
   sock.ev.on("creds.update", async () => {
     try {
       await saveCreds();
-      await backupSession(sessionId, phoneNumber);
+      backupSession(sessionId, phoneNumber);
     } catch (error) {}
   });
 
@@ -231,7 +226,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
       const { connection, lastDisconnect, isNewLogin } = update;
 
       if (isNewLogin) {
-        console.log(`🎉 [LINK ACCEPTED] +${phoneNumber} Logged in!`);
+        console.log(`🎉 [LINK ACCEPTED] +${phoneNumber} Pairing Successful!`);
       }
 
       if (connection === "open") {
@@ -242,7 +237,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
 
         try {
           await saveCreds();
-          await backupSession(sessionId, phoneNumber);
+          backupSession(sessionId, phoneNumber);
         } catch (e) {}
         return;
       }
@@ -262,18 +257,18 @@ async function createMultiSocket(sessionId, phoneNumber) {
         if (statusCode === DisconnectReason.restartRequired) {
           try {
             await saveCreds();
-            await backupSession(sessionId, phoneNumber);
+            backupSession(sessionId, phoneNumber);
           } catch (e) {}
 
           setTimeout(() => {
             createMultiSocket(sessionId, phoneNumber).catch(() => {});
-          }, 2000);
+          }, 1500);
           return;
         }
 
         setTimeout(() => {
           createMultiSocket(sessionId, phoneNumber).catch(() => {});
-        }, 5000);
+        }, 4000);
       }
     } catch (error) {
       console.error("Connection update error:", error);
@@ -283,9 +278,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
   if (onSocketCreatedCallback) {
     try {
       onSocketCreatedCallback(sock);
-    } catch (error) {
-      console.error("Socket callback error:", error);
-    }
+    } catch (error) {}
   }
 
   return sock;
@@ -297,7 +290,7 @@ async function restoreCredentials() {
   try {
     const sessions = await SessionModel.find({}).lean();
     if (!sessions || sessions.length === 0) {
-      console.log("ℹ️ [SESSIONS] No saved sessions in MongoDB.");
+      console.log("ℹ️️ [SESSIONS] No saved sessions in MongoDB.");
       return false;
     }
 
@@ -321,7 +314,7 @@ async function restoreCredentials() {
         }
 
         createMultiSocket(sessionId, phoneNumber).catch(() => {});
-        await delay(1500);
+        await delay(1200);
       } catch (error) {}
     }
 
@@ -347,7 +340,7 @@ async function requestPairCode(phoneNumber) {
     } catch (e) {}
     try { oldSocket.end(undefined); } catch (e) {}
     global.allActiveSessions.delete(sessionId);
-    await delay(1000);
+    await delay(500);
   }
 
   try {
@@ -373,12 +366,14 @@ async function requestPairCode(phoneNumber) {
         completed = true;
         reject(new Error("Pairing code request timed out. Please try again."));
       }
-    }, 45000);
+    }, 30000);
 
     const checkAndRequest = async () => {
       try {
-        await delay(3000);
+        // WhatsApp socket handshake එක establish වන තෙක් තත්පර 1.5ක් පමණක් රැඳී සිට ක්ෂණිකව code එක ලබා ගනී
+        await delay(1500);
         if (completed) return;
+
         if (sock.darkDinuAuthState?.creds?.registered) {
           completed = true;
           clearTimeout(timeout);
