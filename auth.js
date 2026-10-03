@@ -2,7 +2,6 @@ const fs = require("fs");
 const path = require("path");
 const pino = require("pino");
 const mongoose = require("mongoose");
-const NodeCache = require("node-cache");
 
 const {
   default: makeWASocket,
@@ -20,6 +19,29 @@ const baseSessionDir = path.join(__dirname, "sessions");
 if (!global.activeBotSockets) global.activeBotSockets = new Set();
 if (!global.allActiveSessions) global.allActiveSessions = new Map();
 if (!global.sessionRetryCache) global.sessionRetryCache = new Map();
+
+// Built-in cache class to replace 'node-cache'
+class SimpleCache {
+  constructor(ttlSeconds = 120) {
+    this.ttl = ttlSeconds * 1000;
+    this.cache = new Map();
+  }
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return undefined;
+    if (Date.now() > item.expiry) {
+      this.cache.delete(key);
+      return undefined;
+    }
+    return item.value;
+  }
+  set(key, value) {
+    this.cache.set(key, { value, expiry: Date.now() + this.ttl });
+  }
+  del(key) {
+    this.cache.delete(key);
+  }
+}
 
 const reconnectRetries = new Map();
 let onSocketCreatedCallback = null;
@@ -159,7 +181,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
   }
 
   if (!global.sessionRetryCache.has(sessionId)) {
-    global.sessionRetryCache.set(sessionId, new NodeCache({ stdTTL: 120, checkperiod: 60 }));
+    global.sessionRetryCache.set(sessionId, new SimpleCache(120));
   }
   const msgRetryCounterCache = global.sessionRetryCache.get(sessionId);
 
