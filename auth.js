@@ -354,7 +354,7 @@ async function requestPairCode(phoneNumber) {
 
     const checkAndRequest = async () => {
       try {
-        await delay(3000); // Baileys connection stabilization delay
+        await delay(3000);
         if (completed) return;
         if (sock.darkDinuAuthState?.creds?.registered) {
           completed = true;
