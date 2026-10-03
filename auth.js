@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const pino = require("pino");
 const mongoose = require("mongoose");
+const NodeCache = require("node-cache");
 
 const {
   default: makeWASocket,
@@ -158,7 +159,7 @@ async function createMultiSocket(sessionId, phoneNumber) {
   }
 
   if (!global.sessionRetryCache.has(sessionId)) {
-    global.sessionRetryCache.set(sessionId, new Map());
+    global.sessionRetryCache.set(sessionId, new NodeCache({ stdTTL: 120, checkperiod: 60 }));
   }
   const msgRetryCounterCache = global.sessionRetryCache.get(sessionId);
 
@@ -176,11 +177,11 @@ async function createMultiSocket(sessionId, phoneNumber) {
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     keepAliveIntervalMs: 25000,
-    emitOwnEvents: true,
+    emitOwnEvents: false,
     generateHighQualityLinkPreview: false,
     msgRetryCounterCache,
-    retryRequestDelayMs: 2000,
-    maxMsgRetryCount: 5,
+    retryRequestDelayMs: 2500,
+    maxMsgRetryCount: 3,
     getMessage: async () => ({ conversation: "" })
   };
 
