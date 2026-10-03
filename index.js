@@ -353,8 +353,8 @@ function initBot(sock) {
       };
 
       /* =========================================================
-         ⭐ CRITICAL FIX: INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK / YT 1, 2, 3)
-         ඕනෑම user කෙනෙක් (Bot user / Group member / Dev) අංක reply කළ විගස ක්‍රියාත්මක වීම
+         ⭐ INTERACTIVE SELECTION HANDLERS (FB / SONG / TIKTOK / YT 1, 2, 3)
+         ඕනෑම user කෙනෙක් (Bot Owner, Group Member, Dev) අංක reply කළ විගස Run වේ
       ========================================================= */
       const quotedMsgId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
@@ -485,12 +485,13 @@ function initBot(sock) {
         }
       }
 
-      // 🛑 LOOP FIX 2: Inbox එකකදී අදාළ බොටා හැර අනිත් බොට්ලා reply කිරීම වැළැක්වීම
+      /* =========================================================
+         🛑 LOOP FIX 2 (PERFECTED):
+         Inbox එකකදී බොට්ලා කිහිපයක් එකිනෙකාට reply කිරීම සහ cross-talk වීම වළක්වයි.
+         සාමාන්‍ය users ලා බොට්ගේ Inbox එකට හෝ Group එකට එවන commands නිදහසේ run වේ.
+      ========================================================= */
       if (!isGroup && !isOwner && !isDev) {
-        const chatReceiver = from.replace(/[^0-9]/g, "");
-        if (chatReceiver !== currentBotNumber && !msg.key.fromMe) {
-          return;
-        }
+        if (msg.key.fromMe) return;
       }
 
       /* =========================================================
@@ -640,12 +641,13 @@ function initBot(sock) {
       }
 
       /* =========================================================
-         4. WORK MODE PROTECTION
+         4. WORK MODE PROTECTION (FIXED)
       ========================================================= */
       if (!isOwner) {
-        if (settings.workMode === "private") return;
-        if (settings.workMode === "groups" && !isGroup) return;
-        if (settings.workMode === "inbox" && isGroup) return;
+        const mode = (settings?.workMode || "public").toLowerCase();
+        if (mode === "private") return;
+        if (mode === "groups" && !isGroup) return;
+        if (mode === "inbox" && isGroup) return;
       }
 
       /* =========================================================
@@ -668,7 +670,7 @@ function initBot(sock) {
         } catch (e) {}
       }
 
-      // Settings Reply Handler
+      // Settings Reply Handler (Owner / Dev Only)
       if (quotedMsgId && global.settingSessions.has(quotedMsgId) && (isOwner || isDev)) {
         const settingCmd = getCommand("setting");
         if (settingCmd && typeof settingCmd.execute === "function") {
@@ -775,7 +777,7 @@ function initBot(sock) {
       const commandName = args.shift().toLowerCase();
       if (!commandName) return;
 
-      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber}`);
+      console.log(`⚡ [EXECUTE]: ${matchedPrefix}${commandName} | Bot: +${currentBotNumber} | User: +${senderClean}`);
       const targetCommand = getCommand(commandName);
 
       if (targetCommand && typeof targetCommand.execute === "function") {
