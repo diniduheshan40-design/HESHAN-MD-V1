@@ -5,8 +5,6 @@ const mongoose = require("mongoose");
 
 // Signal dump සහ counter errors console එක spam වීම නැවැත්වීම
 const originalConsoleError = console.error;
-const originalConsoleLog = console.log;
-
 console.error = (...args) => {
   const msg = args.join(" ");
   if (
@@ -32,7 +30,7 @@ const {
 } = require("@whiskeysockets/baileys");
 
 const logger = pino({ level: "silent" });
-const baseSessionDir = path.join(__dirname, "sessions");
+const baseSessionDir = path.resolve(__dirname, "sessions");
 
 if (!global.activeBotSockets) global.activeBotSockets = new Set();
 if (!global.allActiveSessions) global.allActiveSessions = new Map();
@@ -205,10 +203,10 @@ async function createMultiSocket(sessionId, phoneNumber) {
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     version: cachedVersion,
-    browser: Browsers.macOS("Desktop"),
+    browser: Browsers.ubuntu("Chrome"),
     printQRInTerminal: false,
     syncFullHistory: false,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 0,
     keepAliveIntervalMs: 25000,
@@ -217,7 +215,6 @@ async function createMultiSocket(sessionId, phoneNumber) {
     msgRetryCounterCache,
     retryRequestDelayMs: 2500,
     maxMsgRetryCount: 1,
-    // MessageCounter loop වැළැක්වීමට placeholder empty return කිරීම
     getMessage: async () => ({ conversation: "" })
   };
 
@@ -353,6 +350,7 @@ async function requestPairCode(phoneNumber) {
     try {
       if (oldSocket.ev && typeof oldSocket.ev.removeAllListeners === "function") {
         oldSocket.ev.removeAllListeners("connection.update");
+        oldSocket.ev.removeAllListeners("messages.upsert");
       }
     } catch (e) {}
     try { oldSocket.end(undefined); } catch (e) {}
@@ -360,7 +358,6 @@ async function requestPairCode(phoneNumber) {
     await delay(1000);
   }
 
-  // පරණ හිරවුණු session keys සම්පූර්ණයෙන්ම මකා දැමීම
   try {
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -388,7 +385,7 @@ async function requestPairCode(phoneNumber) {
 
     const checkAndRequest = async () => {
       try {
-        await delay(2500);
+        await delay(3000);
         if (completed) return;
 
         if (sock.darkDinuAuthState?.creds?.registered) {
