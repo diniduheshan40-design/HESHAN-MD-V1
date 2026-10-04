@@ -301,7 +301,7 @@ function initBot(sock) {
             );
           }
         } catch (err) {
-          console.error("⚠️ Connection message error:", err.message);
+          console.error("⚠️️ Connection message error:", err.message);
         }
       }, 3000);
     }
@@ -748,7 +748,6 @@ function initBot(sock) {
 
       if (targetCommand && typeof targetCommand.execute === "function") {
         try {
-          // Flexible parameters to support execute(sock, msg, args, from) and extra contexts
           await targetCommand.execute(sock, msg, args, from, {
             body,
             cleanBody,
@@ -798,7 +797,7 @@ onSocketCreated((sock) => {
 });
 
 /* =========================================================
-   WEB UI & PAIR SERVICE
+   WEB UI & PAIR SERVICE (FAST LIGHTWEIGHT)
 ========================================================= */
 
 app.get("/", (req, res) => {
@@ -806,60 +805,47 @@ app.get("/", (req, res) => {
     ? botConfig.getRandomLogo() 
     : (botConfig.BOT_LOGOS && botConfig.BOT_LOGOS[0]) || "https://files.catbox.moe/3fxa4u.jpeg";
 
-  const htmlContent = `<!DOCTYPE html>
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DARK DINU • PAIR SERVICE</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; background: #050507 radial-gradient(circle at 50% 0%, rgba(230, 0, 0, 0.25), transparent 70%); font-family: 'Rajdhani', sans-serif; color: #fff; overflow-x: hidden; }
-    .container { width: 100%; max-width: 420px; background: rgba(16, 16, 22, 0.85); border: 1px solid rgba(255, 30, 30, 0.35); border-radius: 28px; padding: 38px 26px; text-align: center; backdrop-filter: blur(16px); box-shadow: 0 0 50px rgba(230, 0, 0, 0.2); position: relative; }
-    .avatar-wrapper { position: relative; width: 100px; height: 100px; margin: 0 auto 18px; }
-    .avatar-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid #ff2b2b; box-shadow: 0 0 25px rgba(255, 43, 43, 0.6); }
-    h1 { font-family: 'Orbitron', sans-serif; font-size: 24px; color: #ffffff; margin-bottom: 4px; }
-    .subtitle { font-size: 14px; color: #9ca3af; margin-bottom: 24px; }
-    input { width: 100%; padding: 16px; background: rgba(10, 10, 14, 0.9); border: 1px solid rgba(255, 50, 50, 0.25); border-radius: 16px; color: #fff; font-size: 18px; text-align: center; outline: none; margin-bottom: 16px; }
-    .btn { width: 100%; padding: 16px; background: linear-gradient(135deg, #e60000, #880000); border: none; border-radius: 16px; color: #fff; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.3s; }
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    #result { margin-top: 22px; min-height: 48px; }
-    .code-box { background: rgba(8, 8, 12, 0.95); border: 1.5px dashed #ff2b2b; border-radius: 16px; padding: 18px 12px; cursor: pointer; transition: 0.2s; }
-    .code-box:active { transform: scale(0.98); }
-    .code-text { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 800; color: #ff3b3b; letter-spacing: 5px; }
-    .badge { display: inline-block; margin-top: 8px; font-size: 12px; color: #00ff88; }
-    .error { color: #ff4d4d; font-size: 14px; padding: 10px; }
-    .footer { margin-top: 26px; font-size: 13px; color: #71717a; }
+    * { margin:0; padding:0; box-sizing:border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; background: #07090e; color: #fff; }
+    .container { width: 100%; max-width: 400px; background: #111622; border: 1px solid #1f293d; border-radius: 20px; padding: 30px 24px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+    .avatar-img { width: 90px; height: 90px; border-radius: 50%; object-fit: cover; border: 2px solid #00ff88; margin-bottom: 12px; }
+    h1 { font-size: 22px; color: #ffffff; margin-bottom: 4px; letter-spacing: 1px; }
+    .subtitle { font-size: 13px; color: #8fa0bc; margin-bottom: 20px; }
+    input { width: 100%; padding: 14px; background: #0a0d14; border: 1px solid #26354d; border-radius: 12px; color: #fff; font-size: 16px; text-align: center; outline: none; margin-bottom: 14px; }
+    input:focus { border-color: #00ff88; }
+    .btn { width: 100%; padding: 14px; background: #00ff88; border: none; border-radius: 12px; color: #000; font-size: 15px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .btn:hover { background: #00cc6a; }
+    .btn:disabled { background: #334155; color: #888; cursor: not-allowed; }
+    #result { margin-top: 18px; }
+    .code-box { background: #0a0d14; border: 1.5px dashed #00ff88; border-radius: 12px; padding: 15px; cursor: pointer; margin-top: 10px; }
+    .code-text { font-size: 26px; font-weight: bold; color: #00ff88; letter-spacing: 5px; }
+    .badge { font-size: 12px; color: #38bdf8; margin-top: 6px; display: block; }
+    .error { color: #ff4d4d; font-size: 13px; margin-top: 10px; }
+    .footer { margin-top: 22px; font-size: 12px; color: #64748b; }
   </style>
 </head>
 <body>
 <div class="container">
-  <div class="avatar-wrapper"><img src="${displayLogo}" class="avatar-img" /></div>
+  <img src="${displayLogo}" class="avatar-img" />
   <h1>DARK DINU MD</h1>
   <p class="subtitle">WhatsApp Multi-Device Link System</p>
-  <div class="input-box"><input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" /></div>
+  <input id="number" type="tel" placeholder="07XXXXXXXX" autocomplete="off" />
   <button id="pairBtn" class="btn" onclick="getCode()">GET PAIR CODE</button>
   <div id="result"></div>
   <div class="footer">POWERED BY <b>${DEVELOPER_NAME}</b></div>
 </div>
 <script>
 var currentCode = "";
-
 function copyCode() {
   if (!currentCode) return;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(currentCode);
-  } else {
-    var temp = document.createElement("input");
-    temp.value = currentCode;
-    document.body.appendChild(temp);
-    temp.select();
-    document.execCommand("copy");
-    document.body.removeChild(temp);
-  }
+  navigator.clipboard.writeText(currentCode);
   var b = document.getElementById("copyBadge");
   if (b) b.innerText = "✓ Copied to clipboard!";
 }
@@ -877,8 +863,8 @@ async function getCode() {
   }
 
   btn.disabled = true;
-  btn.innerText = "GENERATING...";
-  resDiv.innerHTML = '<div style="color: #ff9900;">⏳ Connecting...</div>';
+  btn.innerText = "CONNECTING...";
+  resDiv.innerHTML = '<div style="color: #ff9900; font-size: 13px;">⏳ Requesting WhatsApp Code...</div>';
 
   try {
     var res = await fetch("/pair?num=" + encodeURIComponent(num));
@@ -886,12 +872,12 @@ async function getCode() {
     if (data.code) {
       currentCode = data.code;
       copyCode();
-      resDiv.innerHTML = '<div class="code-box" onclick="copyCode()"><div class="code-text">' + data.code + '</div><div id="copyBadge" class="badge">✓ Copied to clipboard! Click to copy again</div></div>';
+      resDiv.innerHTML = '<div class="code-box" onclick="copyCode()"><div class="code-text">' + data.code + '</div><span id="copyBadge" class="badge">✓ Copied! Tap to copy again</span></div>';
     } else {
       resDiv.innerHTML = '<div class="error">' + (data.error || "Failed to generate pairing code.") + '</div>';
     }
   } catch (err) {
-    resDiv.innerHTML = '<div class="error">❌ Server connection failed! Try again.</div>';
+    resDiv.innerHTML = '<div class="error">❌ Server timed out! Try again.</div>';
   } finally {
     btn.disabled = false;
     btn.innerText = "GET PAIR CODE";
@@ -899,9 +885,7 @@ async function getCode() {
 }
 </script>
 </body>
-</html>`;
-
-  res.type("html").send(htmlContent);
+</html>`);
 });
 
 app.get("/pair", async (req, res) => {
