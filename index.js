@@ -30,8 +30,6 @@ const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const http = require("http");
-const https = require("https");
 const axios = require("axios");
 const { exec } = require("child_process");
 
@@ -301,7 +299,7 @@ function initBot(sock) {
             );
           }
         } catch (err) {
-          console.error("⚠️️ Connection message error:", err.message);
+          console.error("⚠ Connection message error:", err.message);
         }
       }, 3000);
     }
@@ -924,27 +922,24 @@ async function start() {
     console.log(`🚀 DARK DINU RUNNING ON PORT: ${PORT}`);
   });
 
-  const appUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  const targetPing = appUrl.endsWith("/") ? `${appUrl}health` : `${appUrl}/health`;
-
-  setInterval(() => {
-    try {
-      const client = targetPing.startsWith("https") ? https : http;
-      client.get(targetPing, (res) => { res.on("data", () => {}); }).on("error", () => {});
-    } catch (e) {}
-  }, 3 * 60 * 1000);
-
   try {
     console.log("🔄 Connecting to MongoDB...");
-    await mongoose.connect(MONGO_URI, { 
-      serverSelectionTimeoutMS: 30000,
-      socketTimeoutMS: 45000
+
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 15000,
+      maxPoolSize: 10
     });
+
     console.log("\x1b[32m%s\x1b[0m", "✅ [DATABASE] MongoDB connected!");
 
-    await restoreCredentials();
+    restoreCredentials().catch((err) => {
+      console.error("❌ Session restore error:", err.message);
+    });
+
   } catch (err) {
-    console.error("Startup error:", err.message);
+    console.error("❌ MongoDB connection error:", err.message);
   }
 }
 
