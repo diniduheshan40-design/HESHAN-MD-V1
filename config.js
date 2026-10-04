@@ -1,8 +1,12 @@
 require("dotenv").config();
 
 module.exports = {
+  // 🗄️ MongoDB Database Connection URL
+  MONGODB_URL: process.env.MONGODB_URL || "mongodb+srv://darkdinu:Heshan2007@cluster0.b6nhi22.mongodb.net/?appName=Cluster0",
+
   // 🔑 OpenRouter API Configuration
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || "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",
+  
   // නොමිලේ දෙන සුපිරි models: "deepseek/deepseek-chat:free" හෝ "google/gemini-2.0-flash-exp:free"
   AI_MODEL: "deepseek/deepseek-chat:free",
 
@@ -10,7 +14,7 @@ module.exports = {
   BOT_LOGOS: [
     "https://files.catbox.moe/3fxa4u.jpeg",    // 🔴 1 වෙනි Logo එක
     "https://files.catbox.moe/koh9j8.jpeg",   // 🔵 2 වෙනි Logo එක
-    "https://files.catbox.moe/jz25of.jpeg"   // 🟢 3 වෙනි Logo එක
+    "https://files.catbox.moe/jz25of.jpeg"    // 🟢 3 වෙනි Logo එක
   ],
 
   // මාරුවෙන් මාරුවට logo තෝරන helper
