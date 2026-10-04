@@ -34,8 +34,8 @@ module.exports = {
 
       await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-      const waitMsg = await reply(
-        `⏳ *Generating Pairing Code for +${cleanNumber}...*\nවිනාඩියක් රැඳී සිටින්න.`
+      await reply(
+        `⏳ *Generating Pairing Code for +${cleanNumber}...*\nකරුණාකර තත්පර කිහිපයක් රැඳී සිටින්න.`
       );
 
       // 3. auth.js එකෙන් Pair code එක generate කරගැනීම
@@ -46,7 +46,7 @@ module.exports = {
         throw new Error("WhatsApp වෙතින් Pairing Code එකක් නොලැබුණි.");
       }
 
-      // 4. Pairing Code එකෙන් ලස්සන QR Code Image එකක් Buffer එකක් ලෙස හැදීම
+      // 4. Pairing Code එකෙන් QR Code Image Buffer එකක් සෑදීම
       const qrBuffer = await QRCode.toBuffer(pairCode, {
         errorCorrectionLevel: "H",
         type: "image/png",
@@ -72,19 +72,19 @@ module.exports = {
 2️⃣ *Linked Devices* තෝරන්න.
 3️⃣ *Link a Device* click කරන්න.
 4️⃣ පහළ ඇති *Link with phone number instead* ඔබන්න.
-5️⃣ ඉහත ලබාදී ඇති අකුරු 8 කේතය ඇතුළත් කරන්න:
+5️⃣ පහත ඇති අකුරු 8 කේතය ඇතුළත් කරන්න:
 👉 \`${pairCode}\`
 
 > ⚠️ *තත්පර 45ක් ඇතුළත කේතය ඇතුළත් කර අවසන් කරන්න.*
 > *Powered by ${DEVELOPER_NAME || "DINIDU HESHAN"}* 🔥`;
 
-      // 6. QR Code එක සහ Caption එක එකවර Send කිරීම
+      // 6. QR Code එක සහ Caption එක Send කිරීම
       await sock.sendMessage(from, {
         image: qrBuffer,
         caption: captionText
       }, { quoted: msg });
 
-      // Code එක පමණක් වෙනම Copy කරගන්න Message එකක්
+      // Code එක පමණක් පහසුවෙන් Copy කරගැනීමට වෙනම යැවීම
       await sock.sendMessage(from, {
         text: `${pairCode}`
       }, { quoted: msg });
