@@ -83,9 +83,11 @@ const DEVELOPER_NAME = "DINIDU HESHAN";
 const DEVELOPER_NUMBER = "94719845166";
 const DEVELOPER_LID = "15947733680169";
 
+// අලුතින් සාදන ලද MongoDB Database URL එක
 const MONGO_URI =
   process.env.MONGO_URI ||
-  "mongodb+srv://diniduheshan2007_db_user:SZD7sfcIU6Einajx@cluster0.ah8jggk.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
+  process.env.MONGODB_URL ||
+  "mongodb+srv://darkdinu:Heshan2007@cluster0.b6nhi22.mongodb.net/dark-dinu?retryWrites=true&w=majority&appName=Cluster0";
 
 const BotSettingsSchema = new mongoose.Schema(
   {
@@ -217,6 +219,7 @@ function extractMessageBody(msg) {
     m.buttonsResponseMessage?.selectedButtonId ||
     m.listResponseMessage?.singleSelectReply?.selectedRowId ||
     m.templateButtonReplyMessage?.selectedId ||
+    m.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
     ""
   ).trim();
 }
@@ -745,6 +748,7 @@ function initBot(sock) {
 
       if (targetCommand && typeof targetCommand.execute === "function") {
         try {
+          // Flexible parameters to support execute(sock, msg, args, from) and extra contexts
           await targetCommand.execute(sock, msg, args, from, {
             body,
             cleanBody,
@@ -770,10 +774,12 @@ function initBot(sock) {
         try {
           await sock.sendMessage(from, { react: { text: "🚀", key: msg.key } });
           const start = Date.now();
+          const sent = await sock.sendMessage(from, { text: "⚡ *Pinging...*" }, { quoted: msg });
           const latency = Date.now() - start;
-          const sent = await sock.sendMessage(from, { 
-            text: `⚡ *Pong!*\n⏱️ Latency: *${latency}ms*\n🤖 *Bot:* ${settings.botName}` 
-          }, { quoted: msg });
+          await sock.sendMessage(from, {
+            text: `*Pong \`${latency}ms\` 🔥*`,
+            edit: sent.key
+          });
           if (sent?.key) await sock.sendMessage(from, { react: { text: "⚡", key: sent.key } });
         } catch (e) {}
       }
